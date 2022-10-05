@@ -205,7 +205,7 @@ netTest2 rate n = do
     let trained = foldl' trainEach net0 (zip inps outs)
           where
             trainEach :: Network -> (Vector Double, Vector Double) -> Network
-            trainEach nt (i, o) = trainCustom rate i o nt linear linear'
+            trainEach nt (i, o) = trainCustom rate i o nt logistic logistic'
 
         outMat = [ [ render (( {-norm_2 -} (runNet trained (vector [x,y]))), x, y)
                    | x <- ([45,46 .. 150]) ]    -- init v 50    -- pesos
