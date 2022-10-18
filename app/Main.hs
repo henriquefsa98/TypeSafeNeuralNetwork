@@ -227,10 +227,10 @@ netTest2 rate n = do
     inps <- replicateM n $ do
       --s <- getRandom
       g <- newStdGen
-      let randomHeight :: Double = randomNumber 1.0 2.5 g
       let randomWeight :: Double = randomNumber 35.0 250.0 g
+      let randomHeight :: Double = randomNumber 1.0 2.5 g
       --return $ randomVector s (enumFromThen initLimit endLimit)  2 * 2 - 2
-      return $ Numeric.LinearAlgebra.fromList $ [randomHeight, randomWeight]
+      return $ Numeric.LinearAlgebra.fromList $ [randomWeight, randomHeight]
 
     --let outs = {-map Numeric.LinearAlgebra.fromList $-} map ((\x -> [x]) . imc) inps
     let outs = {-map Numeric.LinearAlgebra.fromList $-} map imc inps
