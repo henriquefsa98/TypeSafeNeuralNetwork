@@ -33,8 +33,8 @@ data Network :: * where
 infixr 5 :&~
 
 instance Show Network where        -- Implementacao de instancia de show de Network para facilitar o debug
-  show (O a) = "Nos: " ++ show (wNodes a) ++ ", Pesos: " ++ show (wBiases a)
-  show (a :&~ b) = "Nos: " ++ show (wNodes a) ++ ", Pesos: " ++ show (wBiases a) ++ "\n" ++ show b
+  show (O a) = "Nos de saida: " ++ show (wNodes a) ++ ", Pesos: " ++ show (wBiases a)
+  show (a :&~ b) = "Nos camada: " ++ show (wNodes a) ++ ", Pesos: " ++ show (wBiases a) ++ "\n" ++ show b
 
 linear :: Floating a => a -> a   -- tende a explodir o valor maximo cabivel de um double...
 linear x = x
@@ -261,7 +261,7 @@ netTest2 rate n = do
     return $ (unlines $ map unlines outMat, trained)
 
 
-netTest3 :: (MonadRandom m, MonadIO m) => Double -> Int -> [[Double]]-> m (String, Network)     -- Tentativa de resolver IMC  -- agora com input de arquivo txt como entrada de samples!
+netTest3 :: (MonadRandom m, MonadIO m) => Double -> Int -> [[Double]]-> m (Network, String, Network)     -- Tentativa de resolver IMC  -- agora com input de arquivo txt como entrada de samples!
 netTest3 rate n samples = do
     
     let inps = map Numeric.LinearAlgebra.fromList $ map (take 2) samples
@@ -279,7 +279,7 @@ netTest3 rate n samples = do
                  | y <- (map (head . tail) samples)]      -- init v 20    -- alturas   -- [1.00, 1.05 .. 2.15]
         render (result, p, a) = "peso: " ++ show p ++ ", altura: " ++ show a ++ ", imc: " ++ show (imc (Numeric.LinearAlgebra.fromList[p,a])) ++ ", AI Result: " ++ show result
 
-    return $ (unlines $ map unlines outMat, trained)
+    return $ (net0, unlines $ map unlines outMat, trained)
 
 
 
@@ -297,7 +297,7 @@ main = do
     args <- getArgs
     let n    = readMaybe =<< (args !!? 0)
         rate = readMaybe =<< (args !!? 1)
-    samplesFile <- readFile "/home/kali/Downloads/UFABC/PGC/Github/TypeSafeNeuralNetwork/inputs/inputs.txt"
+    samplesFile <- readFile "/home/kali/Downloads/UFABC/PGC/Github/TypeSafeNeuralNetwork/inputs/inputs1.txt"
 
     let samples = stringToSamples samplesFile
     putStrLn "\n\nSamples do txt:"
@@ -306,11 +306,13 @@ main = do
     {-(outputS, netTrained) <- (netTest2 (fromMaybe 0.25   rate)
                                      (fromMaybe 2 n   )   -- init value 500000
                             )-}
-    (outputS, netTrained) <- (netTest3 (fromMaybe 0.25   rate)
+    (netInit, outputS, netTrained) <- (netTest3 (fromMaybe 0.25   rate)
                                      (fromMaybe 10 n   )   -- init value 500000
                                      samples
                             )
     putStrLn outputS
+    putStrLn "\n\n\nImprimindo a rede inicial:\n"
+    putStrLn $ show netInit
     putStrLn "\n\n\nAgora imprimindo a rede final:\n"
     putStrLn $ show netTrained
     {-putStrLn =<< evalRandIO (netTest2 (fromMaybe 0.25   rate)
