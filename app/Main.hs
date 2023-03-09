@@ -74,14 +74,19 @@ runNet (O w)      !v = logistic (runLayer w v)
 runNet (w :&~ n') !v = let v' = logistic (runLayer w v)
                        in  runNet n' v'
 
-
+arredonda :: (Ord a1, Fractional a1, Fractional a2) => a1 -> a2
+arredonda x
+  | x > 0.5   = fromRational 1
+  | otherwise = fromRational 0
 
 runNetCustom :: Network -> (Floating (Vector Double) => Vector Double -> Vector Double) -> Vector Double -> Vector Double  -- para usar funcs de ativacao customizadas
-runNetCustom (O w)      f !v = f (runLayer w v)  -- era f, agora forcando que a ultima camada seja logistica!
+--runNetCustom (O w)      f !v = Numeric.LinearAlgebra.fromList $ map arredonda $ Numeric.LinearAlgebra.toList $ f (runLayer w v)  -- era f, agora forcando que a ultima camada seja logistica!
+runNetCustom (O w)      f !v = f (runLayer w v)
 runNetCustom (w :&~ n') f !v = let v' = f (runLayer w v)
                        in  runNetCustom n' f v'   -- mudar para runNetCustom
 
 
+vectorRandomico :: MonadRandom m => Int -> m (Vector Double)
 vectorRandomico x = do
                       seed :: Int <- getRandom
                       let vec = randomVector seed Uniform x
@@ -155,10 +160,10 @@ trainCustom rate x0 target net f f' = fst $ go x0 net
     -- handle the output layer
     go !x (O w@(W wB wN))
         = let y    = runLayer w x
-              o    = f y     -- era f, tentando for'car agora que a ultima camada apenas seja logistica, e as demais possam ser F
+              o    = linear y     -- era f, tentando for'car agora que a ultima camada apenas seja logistica, e as demais possam ser F
               -- the gradient (how much y affects the error)
               --   (logistic' is the derivative of logistic)
-              dEdy = f' y * (o - target)   -- nao faz sentido, vai tender ao infinito....
+              dEdy = linear' y * (o - target)   -- nao faz sentido, vai tender ao infinito....
               --dEdy = logistic' y * (o - (o - target))
               -- new bias weights and node weights
               wB'  = wB - scale rate dEdy
@@ -214,19 +219,24 @@ netTest rate n = do
     v `inCircle` (o, r) = norm_2 (v - o) <= r
 
 
+imc3 :: Fractional a => p -> a
 imc3 _ = fromRational 1
 
+imc2 :: (Container c a, Ord a, Fractional a, Num (IndexOf c)) => c a -> Vector Double
 imc2 vec = if (atIndex vec 0 / (a * a)) >= 25.0 then Numeric.LinearAlgebra.fromList [1.0 :: Double] else Numeric.LinearAlgebra.fromList [0.0 :: Double] -- retorna 1 se acima do peso 
             where
               a = atIndex vec 1
 
+imc :: (Container c a1, Ord a1, Fractional a1, Fractional a2, Num (IndexOf c)) => c a1 -> a2
 imc vec = if (atIndex vec 0 / (a * a)) >= 25.0 then fromRational 1 else fromRational 0 -- retorna 1 se acima do peso 
             where
               a = atIndex vec 1
 
 
+randomNumber :: (Random a, RandomGen g) => a -> a -> g -> a
 randomNumber lo hi gen = head $ randomRs (lo, hi) gen
 
+randomNumberPrint :: MonadIO m => Double -> Double -> m Double
 randomNumberPrint lo hi = do
                 g <- newStdGen
                 let result :: Double = randomNumber lo hi g
@@ -261,27 +271,64 @@ netTest2 rate n = do
     return $ (unlines $ map unlines outMat, trained)
 
 
-netTest3 :: (MonadRandom m, MonadIO m) => Double -> Int -> [[Double]]-> m (Network, String, Network)     -- Tentativa de resolver IMC  -- agora com input de arquivo txt como entrada de samples!
+netTest3 :: (MonadRandom m, MonadIO m) => Double -> Int -> [[Double]]-> m (Network, String, Network, String)     -- Tentativa de resolver IMC  -- agora com input de arquivo txt como entrada de samples!
 netTest3 rate n samples = do
     
     let inps = map Numeric.LinearAlgebra.fromList $ map (take 2) samples
     let outs = {-map Numeric.LinearAlgebra.fromList $-} map imc inps
 
-    net0 <- randomNet 2 [] 1 -- params originais: 2 [16,8] 1 -- aparentemente tem problemas em ter mais de um output  -- nao tinha problemas com mais de um output, mas sim com a func de ativi
+    net0 <- randomNet 2 [20] 1 -- params originais: 2 [16,8] 1 -- aparentemente tem problemas em ter mais de um output  -- nao tinha problemas com mais de um output, mas sim com a func de ativi
 
-    let trained = foldl' trainEach net0 (zip inps outs)
+    --let trained = foldl' trainEach net0 (zip inps outs)
+    let trained = trainNTimes net0 (inps, outs) n
           where
-            trainEach :: Network -> (Vector Double, Vector Double) -> Network
-            trainEach nt (i, o) = trainCustom rate i o nt linear linear'
+            trainNTimes :: Network -> ([Vector Double], [Vector Double]) -> Int -> Network
+            trainNTimes net (i, o) n2
+                | n2 == 0 = net
+                | otherwise = trainNTimes (foldl' trainEach net (zip i o)) (i, o) (n2 - 1)
+                        where
+                            trainEach :: Network -> (Vector Double, Vector Double) -> Network
+                            trainEach nt (i2, o2) = trainCustom rate i2 o2 nt logistic logistic'
 
-        outMat = [ [ render (( {-norm_2-}  (runNetCustom trained linear (vector [x,y]))), x, y)     -- usando runNetCustom para poder passar func activ custom pra rodar a net
-                   | x <- (map (head) samples) ]    -- init v 50    -- pesos    -- [45,46 .. 150]
-                 | y <- (map (head . tail) samples)]      -- init v 20    -- alturas   -- [1.00, 1.05 .. 2.15]
+        outMat = [ [ render (( {-norm_2-}  (runNetCustom trained logistic (vector [(head x),(head $ tail x)]))), (head x), (head $ tail x))     -- usando runNetCustom para poder passar func activ custom pra rodar a net
+                   | x <- samples ] ]   -- init v 50    -- pesos    -- [45,46 .. 150]
+                 -- | y <- (map (head . tail) samples)]      -- init v 20    -- alturas   -- [1.00, 1.05 .. 2.15]
+        outMatInit = [ [ render (( {-norm_2-}  (runNetCustom net0 logistic (vector [(head x),(head $ tail x)]))), (head x), (head $ tail x)) 
+                       | x <- samples ] ]   
+         
         render (result, p, a) = "peso: " ++ show p ++ ", altura: " ++ show a ++ ", imc: " ++ show (imc (Numeric.LinearAlgebra.fromList[p,a])) ++ ", AI Result: " ++ show result
 
-    return $ (net0, unlines $ map unlines outMat, trained)
+    return $ (net0, unlines $ map unlines outMatInit, trained, unlines $ map unlines outMat)
 
+-- atualizar para versao final de treino de rede: receber entradas E saidas, receber modeloo inicial de rede construido fora da funcao de treino!
+netTest4 :: (MonadRandom m, MonadIO m) => Double -> Int -> [[Double]] -> [[Double]] -> m (Network, String, Network, String)     -- Tentativa de resolver IMC  -- agora com input de arquivo txt como entrada de samples!
+netTest4 rate n samples results = do
+    
+    let inps = map Numeric.LinearAlgebra.fromList $ map (take 2) samples
+    let outs = {-map Numeric.LinearAlgebra.fromList $-} map imc inps
 
+    net0 <- randomNet 2 [20] 1 -- params originais: 2 [16,8] 1 -- aparentemente tem problemas em ter mais de um output  -- nao tinha problemas com mais de um output, mas sim com a func de ativi
+
+    --let trained = foldl' trainEach net0 (zip inps outs)
+    let trained = trainNTimes net0 (inps, outs) n
+          where
+            trainNTimes :: Network -> ([Vector Double], [Vector Double]) -> Int -> Network
+            trainNTimes net (i, o) n2
+                | n2 == 0 = net
+                | otherwise = trainNTimes (foldl' trainEach net (zip i o)) (i, o) (n2 - 1)
+                        where
+                            trainEach :: Network -> (Vector Double, Vector Double) -> Network
+                            trainEach nt (i2, o2) = trainCustom rate i2 o2 nt logistic logistic'
+
+        outMat = [ [ render (( {-norm_2-}  (runNetCustom trained logistic (vector [(head x),(head $ tail x)]))), (head x), (head $ tail x))     -- usando runNetCustom para poder passar func activ custom pra rodar a net
+                   | x <- samples ] ]   -- init v 50    -- pesos    -- [45,46 .. 150]
+                 -- | y <- (map (head . tail) samples)]      -- init v 20    -- alturas   -- [1.00, 1.05 .. 2.15]
+        outMatInit = [ [ render (( {-norm_2-}  (runNetCustom net0 logistic (vector [(head x),(head $ tail x)]))), (head x), (head $ tail x)) 
+                       | x <- samples ] ]   
+         
+        render (result, p, a) = "peso: " ++ show p ++ ", altura: " ++ show a ++ ", imc: " ++ show (imc (Numeric.LinearAlgebra.fromList[p,a])) ++ ", AI Result: " ++ show result
+
+    return $ (net0, unlines $ map unlines outMatInit, trained, unlines $ map unlines outMat)
 
 
 stringToSamples :: String -> [[Double]]
@@ -297,19 +344,22 @@ main = do
     args <- getArgs
     let n    = readMaybe =<< (args !!? 0)
         rate = readMaybe =<< (args !!? 1)
-    samplesFile <- readFile "/home/kali/Downloads/UFABC/PGC/Github/TypeSafeNeuralNetwork/inputs/inputs1.txt"
+    samplesFile <- readFile "/home/kali/Downloads/UFABC/PGC/Github/TypeSafeNeuralNetwork/inputs/inputs.txt"
 
     let samples = stringToSamples samplesFile
-    putStrLn "\n\nSamples do txt:"
-    putStrLn (show samples)
+    putStrLn "\n\n50 primeiras Samples do txt:"
+    putStrLn (take 50 $ show samples)
     putStrLn "\n\nTraining network..."
     {-(outputS, netTrained) <- (netTest2 (fromMaybe 0.25   rate)
                                      (fromMaybe 2 n   )   -- init value 500000
                             )-}
-    (netInit, outputS, netTrained) <- (netTest3 (fromMaybe 0.25   rate)
-                                     (fromMaybe 10 n   )   -- init value 500000
+    (netInit, outputInit, netTrained, outputS) <- (netTest3 (fromMaybe 0.000025   rate)
+                                     (fromMaybe 100000 n   )   -- init value 500000
                                      samples
                             )
+    putStrLn "\n\n\nImprimindo predicao nao treinada:\n"
+    putStrLn outputInit
+    putStrLn "\n\n\nImprimindo predicao agora treinada:\n"
     putStrLn outputS
     putStrLn "\n\n\nImprimindo a rede inicial:\n"
     putStrLn $ show netInit

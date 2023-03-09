@@ -25,9 +25,14 @@ class NeuralNetwork(nn.Module):
         #x = torch.round(self.layer_2(x))
         #x = self.layer_2(x)
         #x = torch.round(self.layer_0(x))
-        x = torch.tanh(self.layer_1(x))
-        x = torch.sigmoid(self.layer_2(x))
+        #x = torch.tanh(self.layer_1(x))
+        #x = torch.sigmoid(self.layer_2(x))
         #x = torch.where(x > 0.5, 1, 0)
+
+        # mais simples possivel
+        x = torch.sigmoid(self.layer_1(x))
+        x = self.layer_2(x)
+    
 
         return x
 
