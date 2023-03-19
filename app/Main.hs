@@ -25,7 +25,7 @@ data Weights = W { wBiases :: !(Vector Double)  -- n
                  }                              -- "m to n" layer
 
 
-data Activation = Linear | Logistic | Tangent
+data Activation = Linear | Logistic | Tangent deriving Show
 
 getFunctions :: Floating a => Activation -> ((a -> a), (a -> a))
 getFunctions f = case f of
@@ -33,7 +33,6 @@ getFunctions f = case f of
                   Logistic -> (logistic, logistic')
                   Tangent  -> (tangent, tangent')
 
-data ActivationFunction = F {function :: !(R -> R)}
 
 data Network :: * where
     O     :: !Weights
@@ -42,6 +41,7 @@ data Network :: * where
           -> !Network
           -> Network
 infixr 5 :&~
+
 
 data Network2 :: * where
     O2     :: !Activation -> !Weights
