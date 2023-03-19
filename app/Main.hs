@@ -24,6 +24,9 @@ data Weights = W { wBiases :: !(Vector Double)  -- n
                  , wNodes  :: !(Matrix Double)  -- n x m
                  }                              -- "m to n" layer
 
+
+data ActivationFunction = F {function :: !(R -> R)}
+
 data Network :: * where
     O     :: !Weights
           -> Network
@@ -32,8 +35,16 @@ data Network :: * where
           -> Network
 infixr 5 :&~
 
+data Network2 :: * where
+    O2     :: !ActivationFunction -> !Weights
+          -> Network2
+    (:&~~) :: !ActivationFunction -> !Weights
+          -> !Network2
+          -> Network2
+infixr 5 :&~~
+
 instance Show Network where        -- Implementacao de instancia de show de Network para facilitar o debug
-  show (O a) = "Nos de saida: " ++ show (wNodes a) ++ ", Pesos: " ++ show (wBiases a)
+  show (O a) =     "Nos de saida: " ++ show (wNodes a) ++ ", Pesos: " ++ show (wBiases a)
   show (a :&~ b) = "Nos camada: " ++ show (wNodes a) ++ ", Pesos: " ++ show (wBiases a) ++ "\n" ++ show b
 
 linear :: Floating a => a -> a   -- tende a explodir o valor maximo cabivel de um double...
@@ -79,6 +90,9 @@ arredonda x
   | x > 0.5   = fromRational 1
   | otherwise = fromRational 0
 
+derive :: (Fractional a) => a -> (a -> a) -> (a -> a)
+derive h f x = (f (x+h) - f x) / h 
+
 runNetCustom :: Network -> (Floating (Vector Double) => Vector Double -> Vector Double) -> Vector Double -> Vector Double  -- para usar funcs de ativacao customizadas
 --runNetCustom (O w)      f !v = Numeric.LinearAlgebra.fromList $ map arredonda $ Numeric.LinearAlgebra.toList $ f (runLayer w v)  -- era f, agora forcando que a ultima camada seja logistica!
 runNetCustom (O w)      f !v = f (runLayer w v)
@@ -103,6 +117,10 @@ randomWeights i o = do
 randomNet :: MonadRandom m => Int -> [Int] -> Int -> m Network
 randomNet i []     o =     O <$> randomWeights i o
 randomNet i (h:hs) o = (:&~) <$> randomWeights i h <*> randomNet h hs o
+
+randomNet2 :: MonadRandom m => Int -> ActivationFunction -> [(Int, ActivationFunction)] -> Int -> m Network2    --  randomNet2 2 linear [(3, linear)] 1
+randomNet2 i f []          o =  O2 f <$> randomWeights i o     --O2     <$> randomWeights i o $ f
+randomNet2 i f ((h,f2):hs) o =  (:&~~) f <$> randomWeights i h <*> randomNet2 h f2 hs o
 
 train :: Double           -- ^ learning rate
       -> Vector Double    -- ^ input vector
@@ -358,6 +376,8 @@ main = do
     let outputD = 1 :: Int
     let dimensions = (inputD, outputD) :: (Int, Int)
 
+    testNet <- randomNet2 inputD (F logistic) [(20, F logistic), (5, F tangente), (10, F logistic)] outputD
+
     initialNet <- randomNet inputD [20] outputD
 
     --let outputs = map imc samples
@@ -374,7 +394,7 @@ main = do
                                  (fromMaybe 100000 n   )   -- init value 500000
                                  samples
                                  dimensions
-                                 
+
     putStrLn "\n\n\nImprimindo predicao nao treinada:\n"
     putStrLn outputInit
     putStrLn "\n\n\nImprimindo predicao agora treinada:\n"
