@@ -25,6 +25,14 @@ data Weights = W { wBiases :: !(Vector Double)  -- n
                  }                              -- "m to n" layer
 
 
+data Activation = Linear | Logistic | Tangent
+
+getFunctions :: Floating a => Activation -> ((a -> a), (a -> a))
+getFunctions f = case f of
+                  Linear   -> (linear, linear')
+                  Logistic -> (logistic, logistic')
+                  Tangent  -> (tangent, tangent')
+
 data ActivationFunction = F {function :: !(R -> R)}
 
 data Network :: * where
@@ -36,9 +44,9 @@ data Network :: * where
 infixr 5 :&~
 
 data Network2 :: * where
-    O2     :: !ActivationFunction -> !Weights
+    O2     :: !Activation -> !Weights
           -> Network2
-    (:&~~) :: !ActivationFunction -> !Weights
+    (:&~~) :: !Activation -> !Weights
           -> !Network2
           -> Network2
 infixr 5 :&~~
@@ -47,11 +55,22 @@ instance Show Network where        -- Implementacao de instancia de show de Netw
   show (O a) =     "Nos de saida: " ++ show (wNodes a) ++ ", Pesos: " ++ show (wBiases a)
   show (a :&~ b) = "Nos camada: " ++ show (wNodes a) ++ ", Pesos: " ++ show (wBiases a) ++ "\n" ++ show b
 
-linear :: Floating a => a -> a   -- tende a explodir o valor maximo cabivel de um double...
+
+-- Auxiliar definition of activation functions and it's derivatives
+
+linear :: Floating a => a -> a   
 linear x = x
 
-linear' :: Floating (Vector Double) => Vector Double -> Vector Double
-linear' x = Numeric.LinearAlgebra.fromList $ replicate (size  x) 1
+linear' :: Floating a => a -> a
+linear' _ =  1
+
+logistic :: Floating a => a -> a
+logistic x = 1 / (1 + exp (-x))
+
+logistic' :: Floating a => a -> a
+logistic' x = logix * (1 - logix)
+  where
+    logix = logistic x
 
 linear2 :: (Floating a, Eq a) => a -> a    -- tentativa de criar uma activacao linear
 linear2 x = if y == (1/0) then 0 else y
@@ -63,19 +82,18 @@ linear2' x = if y == (1/0) then 0 else y
             where
               y = 2 * x
 
-tangente :: Floating a => a -> a
-tangente x = ((exp x) - (exp (-x))) / (((exp x) + (exp (-x))))
+tangent :: Floating a => a -> a
+tangent x = ((exp x) - (exp (-x))) / (((exp x) + (exp (-x))))
 
-tangente' :: Floating a => a -> a
-tangente' x = 1 + ((tangente x) * (tangente x))
+tangent' :: Floating a => a -> a
+tangent' x = 1 + ((tangent x) * (tangent x))
 
-logistic :: Floating a => a -> a
-logistic x = 1 / (1 + exp (-x))
 
-logistic' :: Floating a => a -> a
-logistic' x = logix * (1 - logix)
-  where
-    logix = logistic x
+
+
+
+
+
 
 runLayer :: Weights -> Vector Double -> Vector Double
 runLayer (W wB wN) v = wB + wN #> v
@@ -118,7 +136,7 @@ randomNet :: MonadRandom m => Int -> [Int] -> Int -> m Network
 randomNet i []     o =     O <$> randomWeights i o
 randomNet i (h:hs) o = (:&~) <$> randomWeights i h <*> randomNet h hs o
 
-randomNet2 :: MonadRandom m => Int -> ActivationFunction -> [(Int, ActivationFunction)] -> Int -> m Network2    --  randomNet2 2 linear [(3, linear)] 1
+randomNet2 :: MonadRandom m => Int -> Activation -> [(Int, Activation)] -> Int -> m Network2    --  randomNet2 2 linear [(3, linear)] 1
 randomNet2 i f []          o =  O2 f <$> randomWeights i o     --O2     <$> randomWeights i o $ f
 randomNet2 i f ((h,f2):hs) o =  (:&~~) f <$> randomWeights i h <*> randomNet2 h f2 hs o
 
@@ -260,7 +278,7 @@ randomNumberPrint lo hi = do
                 let result :: Double = randomNumber lo hi g
                 return result
 
-
+-- Auxiliar functions to apply to samples
 lastN :: Int -> [a] -> [a]
 lastN n xs = drop (length xs - n) xs
 
@@ -376,7 +394,7 @@ main = do
     let outputD = 1 :: Int
     let dimensions = (inputD, outputD) :: (Int, Int)
 
-    testNet <- randomNet2 inputD (F logistic) [(20, F logistic), (5, F tangente), (10, F logistic)] outputD
+    testNet <- randomNet2 inputD Logistic [(20, Logistic), (5, Linear), (10, Logistic)] outputD
 
     initialNet <- randomNet inputD [20] outputD
 
