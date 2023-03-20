@@ -100,8 +100,11 @@ runLayer :: Weights -> Vector Double -> Vector Double
 runLayer (W wB wN) v = wB + wN #> v
 
 runNet :: Network -> Vector Double -> Vector Double
-runNet (O f w)      !v = logistic (runLayer w v)
-runNet ((f,w) :&~ n') !v = let v' = logistic (runLayer w v)
+runNet (O f w)      !v = let (function, _) = getFunctions f
+                          in function (runLayer w v)
+runNet ((f,w) :&~ n') !v = let 
+                              (function, _) = getFunctions f
+                              v' = function (runLayer w v)
                             in  runNet n' v'
 
 arredonda :: (Ord a1, Fractional a1, Fractional a2) => a1 -> a2
@@ -111,17 +114,7 @@ arredonda x
 
 derive :: (Fractional a) => a -> (a -> a) -> (a -> a)
 derive h f x = (f (x+h) - f x) / h 
-
-runNetCustom :: Network -> Vector Double -> Vector Double  -- para usar funcs de ativacao customizadas
---runNetCustom (O w)      f !v = Numeric.LinearAlgebra.fromList $ map arredonda $ Numeric.LinearAlgebra.toList $ f (runLayer w v)  -- era f, agora forcando que a ultima camada seja logistica!
-runNetCustom (O f w)    !v = let (function, _) = getFunctions f
-                              in function (runLayer w v)
-
-runNetCustom ((f,w) :&~ n') !v = let v' = function (runLayer w v)
-                                     (function, _) = getFunctions f
-                                  in  runNetCustom n' v'   -- mudar para runNetCustom
                                       
-
 
 vectorRandomico :: MonadRandom m => Int -> m (Vector Double)
 vectorRandomico x = do
@@ -162,10 +155,11 @@ train rate x0 target = fst . go x0
     -- handle the output layer
     go !x (O f w@(W wB wN))
         = let y    = runLayer w x
-              o    = logistic y
+              (function, derivative) = getFunctions f
+              o    = function y
               -- the gradient (how much y affects the error)
               --   (logistic' is the derivative of logistic)
-              dEdy = logistic' y * (o - target)
+              dEdy = derivative y * (o - target)
               -- new bias weights and node weights
               wB'  = wB - scale rate dEdy
               wN'  = wN - scale rate (dEdy `outer` x)
@@ -176,11 +170,12 @@ train rate x0 target = fst . go x0
     -- handle the inner layers
     go !x ((f, w@(W wB wN)) :&~ n)
         = let y          = runLayer w x
-              o          = logistic y
+              (function, derivative) = getFunctions f
+              o          = function y
               -- get dWs', bundle of derivatives from rest of the net
               (n', dWs') = go o n
               -- the gradient (how much y affects the error)
-              dEdy       = logistic' y * dWs'
+              dEdy       = derivative y * dWs'
               -- new bias weights and node weights
               wB'  = wB - scale rate dEdy
               wN'  = wN - scale rate (dEdy `outer` x)
@@ -188,50 +183,6 @@ train rate x0 target = fst . go x0
               -- bundle of derivatives for next step
               dWs  = tr wN #> dEdy
           in  ((f, w') :&~ n', dWs)
-
-
-trainCustom :: Double           -- ^ learning rate
-      -> Vector Double    -- ^ input vector
-      -> Vector Double    -- ^ target vector
-      -> Network          -- ^ network to train
-      -> (Vector Double -> Vector Double)               --  activation function!
-      -> (Vector Double -> Vector Double)         -- derivative of activation function
-      -> Network
-trainCustom rate x0 target net f f' = fst $ go x0 net
-  where
-    go :: Vector Double    -- ^ input vector
-       -> Network          -- ^ network to train
-       -> (Network, Vector Double)
-    -- handle the output layer
-    go !x (O f2 w@(W wB wN))
-        = let y    = runLayer w x
-              o    = f y     -- era f, tentando for'car agora que a ultima camada apenas seja logistica, e as demais possam ser F
-              -- the gradient (how much y affects the error)
-              --   (logistic' is the derivative of logistic)
-              dEdy = f' y * (o - target)   -- nao faz sentido, vai tender ao infinito....
-              --dEdy = logistic' y * (o - (o - target))
-              -- new bias weights and node weights
-              wB'  = wB - scale rate dEdy
-              wN'  = wN - scale rate (dEdy `outer` x)
-              w'   = W wB' wN'
-              -- bundle of derivatives for next step
-              dWs  = tr wN #> dEdy
-          in  (O f2 w', dWs)
-    -- handle the inner layers
-    go !x ((f2, w@(W wB wN)) :&~ n)
-        = let y          = runLayer w x
-              o          = f y
-              -- get dWs', bundle of derivatives from rest of the net
-              (n', dWs') = go o n
-              -- the gradient (how much y affects the error)
-              dEdy       = f' y * dWs'
-              -- new bias weights and node weights
-              wB'  = wB - scale rate dEdy
-              wN'  = wN - scale rate (dEdy `outer` x)
-              w'   = W wB' wN'
-              -- bundle of derivatives for next step
-              dWs  = tr wN #> dEdy
-          in  ((f2, w') :&~ n', dWs)
 
 
 imc3 :: Fractional a => p -> a
@@ -281,12 +232,12 @@ netTest4 initnet learningrate nruns samples (inputD, outputD) = do
                 | otherwise = trainNTimes (foldl' trainEach net (zip i o)) (i, o) (n2 - 1)
                         where
                             trainEach :: Network -> (Vector Double, Vector Double) -> Network
-                            trainEach nt (i2, o2) = trainCustom learningrate i2 o2 nt logistic logistic'
+                            trainEach nt (i2, o2) = train learningrate i2 o2 nt
 
-        outMat = [ [ render (( (take inputD x), (lastN outputD x), (runNetCustom trained (vector (take inputD x)))))     -- usando runNetCustom para poder passar func activ custom pra rodar a net
+        outMat = [ [ render (( (take inputD x), (lastN outputD x), (runNet trained (vector (take inputD x)))))     -- usando runNetCustom para poder passar func activ custom pra rodar a net
                    | x <- samples ] ]   -- init v 50    -- pesos    -- [45,46 .. 150]
                  -- | y <- (map (head . tail) samples)]      -- init v 20    -- alturas   -- [1.00, 1.05 .. 2.15]
-        outMatInit = [ [ render (( (take inputD x), (lastN outputD x), (runNetCustom initnet (vector ((take inputD x))))))
+        outMatInit = [ [ render (( (take inputD x), (lastN outputD x), (runNet initnet (vector ((take inputD x))))))
                        | x <- samples ] ]
 
         render (inputs, outputs, netResult) = "Inputs: " ++ show inputs ++ ", Expected Outputs: " ++ show outputs ++ ", Neural Network Results: " ++ show netResult
@@ -331,8 +282,8 @@ main = do
                                      samples
                             )-}
     (netInit, outputInit, netTrained, outputS) <- netTest4 initialNet
-                                 (fromMaybe 0.000025   rate)
-                                 (fromMaybe 100000 n   )   -- init value 500000
+                                 (fromMaybe 0.00025   rate)
+                                 (fromMaybe 10000 n   )   -- init value 500000
                                  samples
                                  dimensions
 
