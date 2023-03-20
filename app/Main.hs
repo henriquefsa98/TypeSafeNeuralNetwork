@@ -33,7 +33,7 @@ getFunctions f = case f of
                   Logistic -> (logistic, logistic')
                   Tangent  -> (tangent, tangent')
 
-
+{-}
 data Network :: * where
     O     :: !Weights
           -> Network
@@ -41,19 +41,20 @@ data Network :: * where
           -> !Network
           -> Network
 infixr 5 :&~
+-}
 
+data Network :: * where
+    O     :: !Activation -> !Weights
+          -> Network
+    (:&~) :: (Activation , Weights)
+          -> !Network
+          -> Network
+infixr 5 :&~
 
-data Network2 :: * where
-    O2     :: !Activation -> !Weights
-          -> Network2
-    (:&~~) :: !Activation -> !Weights
-          -> !Network2
-          -> Network2
-infixr 5 :&~~
 
 instance Show Network where        -- Implementacao de instancia de show de Network para facilitar o debug
-  show (O a) =     "Nos de saida: " ++ show (wNodes a) ++ ", Pesos: " ++ show (wBiases a)
-  show (a :&~ b) = "Nos camada: " ++ show (wNodes a) ++ ", Pesos: " ++ show (wBiases a) ++ "\n" ++ show b
+  show (O f a)          =  "Nos de saida: " ++ show (wNodes a) ++ ", Pesos: " ++ show (wBiases a) ++ ", Funcao de Ativacao: " ++ show f
+  show ((f , a) :&~ b)  =  "Nos camada: "   ++ show (wNodes a) ++ ", Pesos: " ++ show (wBiases a) ++ ", Funcao de Ativacao: " ++ show f ++ "\n" ++ show b
 
 
 -- Auxiliar definition of activation functions and it's derivatives
@@ -99,9 +100,9 @@ runLayer :: Weights -> Vector Double -> Vector Double
 runLayer (W wB wN) v = wB + wN #> v
 
 runNet :: Network -> Vector Double -> Vector Double
-runNet (O w)      !v = logistic (runLayer w v)
-runNet (w :&~ n') !v = let v' = logistic (runLayer w v)
-                       in  runNet n' v'
+runNet (O f w)      !v = logistic (runLayer w v)
+runNet ((f,w) :&~ n') !v = let v' = logistic (runLayer w v)
+                            in  runNet n' v'
 
 arredonda :: (Ord a1, Fractional a1, Fractional a2) => a1 -> a2
 arredonda x
@@ -111,11 +112,15 @@ arredonda x
 derive :: (Fractional a) => a -> (a -> a) -> (a -> a)
 derive h f x = (f (x+h) - f x) / h 
 
-runNetCustom :: Network -> (Floating (Vector Double) => Vector Double -> Vector Double) -> Vector Double -> Vector Double  -- para usar funcs de ativacao customizadas
+runNetCustom :: Network -> Vector Double -> Vector Double  -- para usar funcs de ativacao customizadas
 --runNetCustom (O w)      f !v = Numeric.LinearAlgebra.fromList $ map arredonda $ Numeric.LinearAlgebra.toList $ f (runLayer w v)  -- era f, agora forcando que a ultima camada seja logistica!
-runNetCustom (O w)      f !v = f (runLayer w v)
-runNetCustom (w :&~ n') f !v = let v' = f (runLayer w v)
-                       in  runNetCustom n' f v'   -- mudar para runNetCustom
+runNetCustom (O f w)    !v = let (function, _) = getFunctions f
+                              in function (runLayer w v)
+
+runNetCustom ((f,w) :&~ n') !v = let v' = function (runLayer w v)
+                                     (function, _) = getFunctions f
+                                  in  runNetCustom n' v'   -- mudar para runNetCustom
+                                      
 
 
 vectorRandomico :: MonadRandom m => Int -> m (Vector Double)
@@ -132,13 +137,17 @@ randomWeights i o = do
         wN = uniformSample seed2 o (replicate i (-1, 1))
     return $ W wB wN
 
-randomNet :: MonadRandom m => Int -> [Int] -> Int -> m Network
-randomNet i []     o =     O <$> randomWeights i o
-randomNet i (h:hs) o = (:&~) <$> randomWeights i h <*> randomNet h hs o
+randomNet :: MonadRandom m => Int -> Activation -> [(Int, Activation)] -> Int -> m Network
+randomNet i f []     o =     O f <$> randomWeights i o
+randomNet i f ((h,f2):hs) o = do
+                                w <- randomWeights i h
+                                (:&~) (f, w)  <$> randomNet h f2 hs o
 
-randomNet2 :: MonadRandom m => Int -> Activation -> [(Int, Activation)] -> Int -> m Network2    --  randomNet2 2 linear [(3, linear)] 1
+{-
+randomNet2 :: MonadRandom m => Int -> Activation -> [(Int, Activation)] -> Int -> m Network    --  randomNet2 2 linear [(3, linear)] 1
 randomNet2 i f []          o =  O2 f <$> randomWeights i o     --O2     <$> randomWeights i o $ f
 randomNet2 i f ((h,f2):hs) o =  (:&~~) f <$> randomWeights i h <*> randomNet2 h f2 hs o
+-}
 
 train :: Double           -- ^ learning rate
       -> Vector Double    -- ^ input vector
@@ -151,7 +160,7 @@ train rate x0 target = fst . go x0
        -> Network          -- ^ network to train
        -> (Network, Vector Double)
     -- handle the output layer
-    go !x (O w@(W wB wN))
+    go !x (O f w@(W wB wN))
         = let y    = runLayer w x
               o    = logistic y
               -- the gradient (how much y affects the error)
@@ -163,9 +172,9 @@ train rate x0 target = fst . go x0
               w'   = W wB' wN'
               -- bundle of derivatives for next step
               dWs  = tr wN #> dEdy
-          in  (O w', dWs)
+          in  (O f w', dWs)
     -- handle the inner layers
-    go !x (w@(W wB wN) :&~ n)
+    go !x ((f, w@(W wB wN)) :&~ n)
         = let y          = runLayer w x
               o          = logistic y
               -- get dWs', bundle of derivatives from rest of the net
@@ -178,7 +187,7 @@ train rate x0 target = fst . go x0
               w'   = W wB' wN'
               -- bundle of derivatives for next step
               dWs  = tr wN #> dEdy
-          in  (w' :&~ n', dWs)
+          in  ((f, w') :&~ n', dWs)
 
 
 trainCustom :: Double           -- ^ learning rate
@@ -194,7 +203,7 @@ trainCustom rate x0 target net f f' = fst $ go x0 net
        -> Network          -- ^ network to train
        -> (Network, Vector Double)
     -- handle the output layer
-    go !x (O w@(W wB wN))
+    go !x (O f2 w@(W wB wN))
         = let y    = runLayer w x
               o    = f y     -- era f, tentando for'car agora que a ultima camada apenas seja logistica, e as demais possam ser F
               -- the gradient (how much y affects the error)
@@ -207,9 +216,9 @@ trainCustom rate x0 target net f f' = fst $ go x0 net
               w'   = W wB' wN'
               -- bundle of derivatives for next step
               dWs  = tr wN #> dEdy
-          in  (O w', dWs)
+          in  (O f2 w', dWs)
     -- handle the inner layers
-    go !x (w@(W wB wN) :&~ n)
+    go !x ((f2, w@(W wB wN)) :&~ n)
         = let y          = runLayer w x
               o          = f y
               -- get dWs', bundle of derivatives from rest of the net
@@ -222,37 +231,7 @@ trainCustom rate x0 target net f f' = fst $ go x0 net
               w'   = W wB' wN'
               -- bundle of derivatives for next step
               dWs  = tr wN #> dEdy
-          in  (w' :&~ n', dWs)
-
-netTest :: MonadRandom m => Double -> Int -> m String
-netTest rate n = do
-    inps <- replicateM n $ do
-      s <- getRandom
-      return $ randomVector s Uniform 2 * 2 - 1
-    let outs = flip map inps $ \v ->
-                 if v `inCircle` (fromRational 0.33, 0.33)
-                      || v `inCircle` (fromRational (-0.33), 0.33)
-                   then fromRational 1
-                   else fromRational 0
-    net0 <- randomNet 2 [4,3] 1     -- params originais: 2 [16,8] 1
-    let trained = foldl' trainEach net0 (zip inps outs)
-          where
-            trainEach :: Network -> (Vector Double, Vector Double) -> Network
-            trainEach nt (i, o) =  trainCustom rate i o nt logistic logistic'  -- train rate i o nt
-
-        outMat = [ [ render (norm_2 (runNet trained (vector [x / 25 - 1,y / 10 - 1])))
-                   | x <- [0..50] ]    -- init v 50
-                 | y <- [0..20] ]      -- init v 20
-        render r | r <= 0.2  = ' '
-                 | r <= 0.4  = '.'
-                 | r <= 0.6  = '-'
-                 | r <= 0.8  = '='
-                 | otherwise = '#'
-
-    return $ unlines outMat
-  where
-    inCircle :: Vector Double -> (Vector Double, Double) -> Bool
-    v `inCircle` (o, r) = norm_2 (v - o) <= r
+          in  ((f2, w') :&~ n', dWs)
 
 
 imc3 :: Fractional a => p -> a
@@ -282,62 +261,6 @@ randomNumberPrint lo hi = do
 lastN :: Int -> [a] -> [a]
 lastN n xs = drop (length xs - n) xs
 
-netTest2 :: (MonadRandom m, MonadIO m) => Double -> Int -> m (String, Network)     -- Tentativa de resolver IMC
-netTest2 rate n = do
-    inps <- replicateM n $ do
-      --s <- getRandom
-      g <- newStdGen
-      let randomWeight :: Double = randomNumber 35.0 250.0 g
-      let randomHeight :: Double = randomNumber 1.0 2.5 g
-      --return $ randomVector s (enumFromThen initLimit endLimit)  2 * 2 - 2
-      return $ Numeric.LinearAlgebra.fromList $ [randomWeight, randomHeight]
-
-    --let outs = {-map Numeric.LinearAlgebra.fromList $-} map ((\x -> [x]) . imc) inps
-    let outs = {-map Numeric.LinearAlgebra.fromList $-} map imc inps
-
-    net0 <- randomNet 2 [] 1 -- params originais: 2 [16,8] 1 -- aparentemente tem problemas em ter mais de um output  -- nao tinha problemas com mais de um output, mas sim com a func de ativi
-
-    let trained = foldl' trainEach net0 (zip inps outs)
-          where
-            trainEach :: Network -> (Vector Double, Vector Double) -> Network
-            trainEach nt (i, o) = trainCustom rate i o nt linear linear'
-
-        outMat = [ [ render (( {-norm_2-}  (runNetCustom trained linear (vector [x,y]))), x, y)     -- usando runNetCustom para poder passar func activ custom pra rodar a net
-                   | x <- ([45,46 .. 150]) ]    -- init v 50    -- pesos
-                 | y <- ([1.00, 1.05 .. 2.15])]      -- init v 20    -- alturas
-        render (result, p, a) = "peso: " ++ show p ++ ", altura: " ++ show a ++ ", imc: " ++ show (imc (Numeric.LinearAlgebra.fromList[p,a])) ++ ", AI Result: " ++ show result
-
-    return $ (unlines $ map unlines outMat, trained)
-
-
-netTest3 :: (MonadRandom m, MonadIO m) => Double -> Int -> [[Double]]-> m (Network, String, Network, String)     -- Tentativa de resolver IMC  -- agora com input de arquivo txt como entrada de samples!
-netTest3 rate n samples = do
-
-    let inps = map Numeric.LinearAlgebra.fromList $ map (take 2) samples
-    let outs = {-map Numeric.LinearAlgebra.fromList $-} map imc inps
-
-    net0 <- randomNet 2 [20] 1 -- params originais: 2 [16,8] 1 -- aparentemente tem problemas em ter mais de um output  -- nao tinha problemas com mais de um output, mas sim com a func de ativi
-
-    --let trained = foldl' trainEach net0 (zip inps outs)
-    let trained = trainNTimes net0 (inps, outs) n
-          where
-            trainNTimes :: Network -> ([Vector Double], [Vector Double]) -> Int -> Network
-            trainNTimes net (i, o) n2
-                | n2 == 0 = net
-                | otherwise = trainNTimes (foldl' trainEach net (zip i o)) (i, o) (n2 - 1)
-                        where
-                            trainEach :: Network -> (Vector Double, Vector Double) -> Network
-                            trainEach nt (i2, o2) = trainCustom rate i2 o2 nt logistic logistic'
-
-        outMat = [ [ render (( {-norm_2-}  (runNetCustom trained logistic (vector [(head x),(head $ tail x)]))), (head x), (head $ tail x))     -- usando runNetCustom para poder passar func activ custom pra rodar a net
-                   | x <- samples ] ]   -- init v 50    -- pesos    -- [45,46 .. 150]
-                 -- | y <- (map (head . tail) samples)]      -- init v 20    -- alturas   -- [1.00, 1.05 .. 2.15]
-        outMatInit = [ [ render (( {-norm_2-}  (runNetCustom net0 logistic (vector [(head x),(head $ tail x)]))), (head x), (head $ tail x))
-                       | x <- samples ] ]
-
-        render (result, p, a) = "peso: " ++ show p ++ ", altura: " ++ show a ++ ", imc: " ++ show (imc (Numeric.LinearAlgebra.fromList[p,a])) ++ ", AI Result: " ++ show result
-
-    return $ (net0, unlines $ map unlines outMatInit, trained, unlines $ map unlines outMat)
 
 -- atualizar para versao final de treino de rede: receber entradas E saidas, receber modelo inicial de rede construido fora da funcao de treino!
 netTest4 :: (MonadRandom m, MonadIO m) => Network -> Double -> Int -> [[Double]] -> (Int, Int) -> m (Network, String, Network, String)     -- Tentativa de resolver IMC  -- agora com input de arquivo txt como entrada de samples!
@@ -360,10 +283,10 @@ netTest4 initnet learningrate nruns samples (inputD, outputD) = do
                             trainEach :: Network -> (Vector Double, Vector Double) -> Network
                             trainEach nt (i2, o2) = trainCustom learningrate i2 o2 nt logistic logistic'
 
-        outMat = [ [ render (( (take inputD x), (lastN outputD x), (runNetCustom trained logistic (vector (take inputD x)))))     -- usando runNetCustom para poder passar func activ custom pra rodar a net
+        outMat = [ [ render (( (take inputD x), (lastN outputD x), (runNetCustom trained (vector (take inputD x)))))     -- usando runNetCustom para poder passar func activ custom pra rodar a net
                    | x <- samples ] ]   -- init v 50    -- pesos    -- [45,46 .. 150]
                  -- | y <- (map (head . tail) samples)]      -- init v 20    -- alturas   -- [1.00, 1.05 .. 2.15]
-        outMatInit = [ [ render (( (take inputD x), (lastN outputD x), (runNetCustom initnet logistic (vector ((take inputD x))))))
+        outMatInit = [ [ render (( (take inputD x), (lastN outputD x), (runNetCustom initnet (vector ((take inputD x))))))
                        | x <- samples ] ]
 
         render (inputs, outputs, netResult) = "Inputs: " ++ show inputs ++ ", Expected Outputs: " ++ show outputs ++ ", Neural Network Results: " ++ show netResult
@@ -394,9 +317,9 @@ main = do
     let outputD = 1 :: Int
     let dimensions = (inputD, outputD) :: (Int, Int)
 
-    testNet <- randomNet2 inputD Logistic [(20, Logistic), (5, Linear), (10, Logistic)] outputD
+    testNet <- randomNet inputD Logistic [(20, Logistic), (5, Linear), (10, Logistic)] outputD
 
-    initialNet <- randomNet inputD [20] outputD
+    initialNet <- randomNet inputD Logistic [(20, Logistic)] outputD
 
     --let outputs = map imc samples
     putStrLn "\n\nTraining network..."
