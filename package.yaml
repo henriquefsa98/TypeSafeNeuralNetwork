@@ -23,6 +23,9 @@ dependencies:
 - base >= 4.7 && < 5
 - hmatrix
 - MonadRandom==0.5.3
+- binary
+- bytestring
+
 
 
 ghc-options:

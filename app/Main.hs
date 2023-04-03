@@ -5,6 +5,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 
 module Main where
@@ -21,13 +23,20 @@ import Numeric.LinearAlgebra
 import System.Environment
 import Text.Read
 import Data.Kind (Type)
+import GHC.Generics
+import Data.Binary
+import qualified Data.ByteString.Lazy as BSL
+
+
 
 data Weights = W { wBiases :: !(Vector Double)  -- n
                  , wNodes  :: !(Matrix Double)  -- n x m
                  }                              -- "m to n" layer
+                  deriving (Generic)
 
 
-data Activation = Linear | Logistic | Tangent deriving Show
+data Activation = Linear | Logistic | Tangent deriving (Show, Generic)
+
 
 getFunctions :: Floating a => Activation -> (a -> a, a -> a)
 getFunctions f = case f of
@@ -42,13 +51,32 @@ data Network :: Type where
     (:&~) :: (Activation , Weights)
           -> !Network
           -> Network
-infixr 5 :&~
+                          deriving Generic
+infixr 5 :&~ 
 
 
 instance Show Network where        -- Implementacao de instancia de show de Network para facilitar o debug
   show :: Network -> String
   show (O f a)          =  "Nos de saida: " ++ show (wNodes a) ++ ", Pesos: " ++ show (wBiases a) ++ ", Funcao de Ativacao: " ++ show f
   show ((f , a) :&~ b)  =  "Nos camada: "   ++ show (wNodes a) ++ ", Pesos: " ++ show (wBiases a) ++ ", Funcao de Ativacao: " ++ show f ++ "\n" ++ show b
+
+
+-- Definicao de instancias para serializar a rede:
+
+instance Binary Weights
+instance Binary Activation
+instance Binary Network
+
+-- Definicao de funcoes para serializar e desserializar a rede
+
+-- Serializa um modelo de Rede para uma ByteString
+serializeNetwork :: Network -> BSL.ByteString
+serializeNetwork = encode
+
+-- Desserializa um modelo de Rede a partir de uma ByteString
+deserializeNetwork :: BSL.ByteString -> Network
+deserializeNetwork = decode
+
 
 
 -- Auxiliar definition of activation functions and it's derivatives
@@ -235,8 +263,8 @@ netTest4 initnet learningrate nruns samples (inputD, outputD) = do
 runNetFiltered :: Monad m => Network -> [[Double]] -> (Int, Int) -> (Vector Double -> Vector Double) -> m String
 runNetFiltered net samples (inputD, outputD) filterF = do
 
-    let inps = map (Numeric.LinearAlgebra.fromList . take inputD) samples
-    let outs = map (Numeric.LinearAlgebra.fromList . lastN outputD) samples
+    --let inps = map (Numeric.LinearAlgebra.fromList . take inputD) samples
+    --let outs = map (Numeric.LinearAlgebra.fromList . lastN outputD) samples
 
     let outMat = [ [ render ( take inputD x, lastN outputD x, filterF (runNet net (vector (take inputD x))))
                    | x <- samples ] ]
@@ -279,8 +307,8 @@ main = do
     putStrLn "\n\nTraining network..."
 
     (netInit, outputInit, netTrained, outputS) <- netTest4 initialNet
-                                 (fromMaybe 0.025   rate)
-                                 (fromMaybe 10 n   )   -- init value 500000
+                                 (fromMaybe 0.0025   rate)
+                                 (fromMaybe 10000 n   )   -- init value 500000
                                  samples
                                  dimensions
 
@@ -299,6 +327,13 @@ main = do
     {-putStrLn =<< evalRandIO (netTest2 (fromMaybe 0.25   rate)
                                      (fromMaybe 500000 n   )   -- init value 500000
                             )-}
+    putStrLn "\n\nSalvando rede treinada em arquivo: redetreinada.tsnn...."
+    BSL.writeFile "redetreinada.tsnn" $ encode netTrained 
+    putStrLn "\nCarregando rede treianda do arquivo e exibindo:"
+    byteStringNet <- BSL.readFile "redetreinada.tsnn"
+    let fileTrainedNet = deserializeNetwork byteStringNet
+    print fileTrainedNet
+    putStrLn "\nRede salva com sucesso, encerrando a execucao!"
 
 (!!?) :: [a] -> Int -> Maybe a
 xs !!? i = listToMaybe (drop i xs)
