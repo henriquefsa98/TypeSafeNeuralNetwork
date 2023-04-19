@@ -112,6 +112,13 @@ relu' x = if x >= 0 then 1 else 0
 
 
 
+-- Auxiliar way to define a derivative of a function, using limits (can be very unprecise)
+derive :: (Fractional a) => a -> (a -> a) -> (a -> a)
+derive h f x = (f (x+h) - f x) / h
+
+
+
+-- Definitions of functions to run the network itself
 
 runLayer :: Weights -> Vector Double -> Vector Double
 runLayer (W wB wN) v = wB + wN #> v
@@ -124,20 +131,8 @@ runNet ((f,w) :&~ n') !v = let
                               v' = function (runLayer w v)
                             in  runNet n' v'
 
-arredonda :: (Ord a1, Fractional a1, Fractional a2) => a1 -> a2
-arredonda x
-  | x > 0.5   = fromRational 1
-  | otherwise = fromRational 0
 
-derive :: (Fractional a) => a -> (a -> a) -> (a -> a)
-derive h f x = (f (x+h) - f x) / h
-
-
-vectorRandomico :: MonadRandom m => Int -> m (Vector Double)
-vectorRandomico x = do
-                      seed :: Int <- getRandom
-                      let vec = randomVector seed Uniform x
-                      return vec
+-- Definitions of functions to generate a random network
 
 randomWeights :: MonadRandom m => Int -> Int -> m Weights
 randomWeights i o = do
@@ -154,6 +149,9 @@ randomNet i f ((h,f2):hs) o = do
                                 (:&~) (f, w)  <$> randomNet h f2 hs o
 
 
+
+
+-- Training function, train the network for just one iteration
 
 train :: Double           -- ^ learning rate
       -> Vector Double    -- ^ input vector
@@ -198,28 +196,7 @@ train rate x0 target = fst . go x0
           in  ((f, w') :&~ n', dWs)
 
 
-imc3 :: Fractional a => p -> a
-imc3 _ = fromRational 1
 
-imc2 :: (Container c a, Ord a, Fractional a, Num (IndexOf c)) => c a -> Vector Double
-imc2 vec = if atIndex vec 0 / (a * a) >= 25.0 then Numeric.LinearAlgebra.fromList [1.0 :: Double] else Numeric.LinearAlgebra.fromList [0.0 :: Double] -- retorna 1 se acima do peso 
-            where
-              a = atIndex vec 1
-
-imc :: (Container c a1, Ord a1, Fractional a1, Fractional a2, Num (IndexOf c)) => c a1 -> a2
-imc vec = if atIndex vec 0 / (a * a) >= 25.0 then fromRational 1 else fromRational 0 -- retorna 1 se acima do peso 
-            where
-              a = atIndex vec 1
-
-
-randomNumber :: (Random a, RandomGen g) => a -> a -> g -> a
-randomNumber lo hi gen = head $ randomRs (lo, hi) gen
-
-randomNumberPrint :: MonadIO m => Double -> Double -> m Double
-randomNumberPrint lo hi = do
-                g <- newStdGen
-                let result :: Double = randomNumber lo hi g
-                return result
 
 -- Auxiliar functions to apply to samples
 lastN :: Int -> [a] -> [a]
@@ -227,8 +204,8 @@ lastN n xs = drop (length xs - n) xs
 
 
 -- atualizar para versao final de treino de rede: receber entradas E saidas, receber modelo inicial de rede construido fora da funcao de treino!
-netTest4 :: (MonadRandom m) => Network -> Double -> Int -> [[Double]] -> (Int, Int) -> m (Network, String, Network, String)
-netTest4 initnet learningrate nruns samples (inputD, outputD) = do
+netTrain :: (MonadRandom m) => Network -> Double -> Int -> [[Double]] -> (Int, Int) -> m (Network, String, Network, String)
+netTrain initnet learningrate nruns samples (inputD, outputD) = do
 
     let inps = map (Numeric.LinearAlgebra.fromList . take inputD) samples
     let outs = map (Numeric.LinearAlgebra.fromList . lastN outputD) samples
@@ -258,8 +235,6 @@ netTest4 initnet learningrate nruns samples (inputD, outputD) = do
 runNetFiltered :: Monad m => Network -> [[Double]] -> (Int, Int) -> (Vector Double -> Vector Double) -> m String
 runNetFiltered net samples (inputD, outputD) filterF = do
 
-    --let inps = map (Numeric.LinearAlgebra.fromList . take inputD) samples
-    --let outs = map (Numeric.LinearAlgebra.fromList . lastN outputD) samples
 
     let outMat = [ [ render ( take inputD x, lastN outputD x, filterF (runNet net (vector (take inputD x))))
                    | x <- samples ] ]
@@ -301,7 +276,7 @@ main = do
 
     putStrLn "\n\nTraining network..."
 
-    (netInit, outputInit, netTrained, outputS) <- netTest4 initialNet
+    (netInit, outputInit, netTrained, outputS) <- netTrain initialNet
                                  (fromMaybe 0.0025   rate)
                                  (fromMaybe 10000 n   )   -- init value 500000
                                  samples
