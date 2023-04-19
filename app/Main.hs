@@ -35,14 +35,15 @@ data Weights = W { wBiases :: !(Vector Double)  -- n
                   deriving (Generic)
 
 
-data Activation = Linear | Logistic | Tangent deriving (Show, Generic)
+data Activation = Linear | Logistic | Tangent | Relu deriving (Show, Generic)
 
 
-getFunctions :: Floating a => Activation -> (a -> a, a -> a)
+getFunctions :: (Ord a, Floating a) => Activation -> (a -> a, a -> a)
 getFunctions f = case f of
                   Linear   -> (linear, linear')
                   Logistic -> (logistic, logistic')
                   Tangent  -> (tangent, tangent')
+                  Relu     -> (relu, relu')
 
 
 data Network :: Type where
@@ -52,7 +53,7 @@ data Network :: Type where
           -> !Network
           -> Network
                           deriving Generic
-infixr 5 :&~ 
+infixr 5 :&~
 
 
 instance Show Network where        -- Implementacao de instancia de show de Network para facilitar o debug
@@ -95,15 +96,6 @@ logistic' x = logix * (1 - logix)
   where
     logix = logistic x
 
-linear2 :: (Floating a, Eq a) => a -> a    -- tentativa de criar uma activacao linear
-linear2 x = if y == 1/0 then 0 else y
-            where
-             y = x * x + 3
-
-linear2' :: (Floating a, Eq a) => a -> a
-linear2' x = if y == 1/0 then 0 else y
-            where
-              y = 2 * x
 
 tangent :: Floating a => a -> a
 tangent x = (exp x - exp (-x)) / (exp x + exp (-x))
@@ -112,8 +104,11 @@ tangent' :: Floating a => a -> a
 tangent' x = 1 + (tangent x) * (tangent x)
 
 
+relu :: (Ord a, Floating a) => a -> a
+relu x  = max x 0
 
-
+relu' :: (Ord a, Floating a) => a -> a
+relu' x = if x >= 0 then 1 else 0
 
 
 
@@ -328,7 +323,7 @@ main = do
                                      (fromMaybe 500000 n   )   -- init value 500000
                             )-}
     putStrLn "\n\nSalvando rede treinada em arquivo: redetreinada.tsnn...."
-    BSL.writeFile "redetreinada.tsnn" $ encode netTrained 
+    BSL.writeFile "redetreinada.tsnn" $ encode netTrained
     putStrLn "\nCarregando rede treianda do arquivo e exibindo:"
     byteStringNet <- BSL.readFile "redetreinada.tsnn"
     let fileTrainedNet = deserializeNetwork byteStringNet
