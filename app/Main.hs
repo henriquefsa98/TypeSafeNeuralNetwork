@@ -204,7 +204,7 @@ lastN n xs = drop (length xs - n) xs
 
 
 -- atualizar para versao final de treino de rede: receber entradas E saidas, receber modelo inicial de rede construido fora da funcao de treino!
-netTrain :: (MonadRandom m) => Network -> Double -> Int -> [[Double]] -> (Int, Int) -> m (Network, String, Network, String)
+netTrain :: (MonadRandom m) => Network -> Double -> Int -> [[Double]] -> (Int, Int) -> m (Network, [([Double], [Double], [Double])], Network, [([Double], [Double], [Double])])
 netTrain initnet learningrate nruns samples (inputD, outputD) = do
 
     let inps = map (Numeric.LinearAlgebra.fromList . take inputD) samples
@@ -220,30 +220,39 @@ netTrain initnet learningrate nruns samples (inputD, outputD) = do
                             trainEach :: Network -> (Vector Double, Vector Double) -> Network
                             trainEach nt (i2, o2) = train learningrate i2 o2 nt
 
-        outMat = [ [ render ( (take inputD x), (lastN outputD x), (runNet trained (vector (take inputD x))))
-                   | x <- samples ] ]
+        outMatInit = [( take inputD x, lastN outputD x, Numeric.LinearAlgebra.toList(runNet initnet (vector (take inputD x))))
+                       | x <- samples ]
 
-        outMatInit = [ [ render ( (take inputD x), (lastN outputD x), (runNet initnet (vector ((take inputD x)))))
-                       | x <- samples ] ]
+        outMat     = [ ( take inputD x, lastN outputD x, Numeric.LinearAlgebra.toList(runNet trained (vector (take inputD x))))
+                       | x <- samples ]
 
         render (inputs, outputs, netResult) = "Inputs: " ++ show inputs ++ ", Expected Outputs: " ++ show outputs ++ ", Neural Network Results: " ++ show netResult
 
-    return (initnet, unlines $ map unlines outMatInit, trained, unlines $ map unlines outMat)
+    --return (initnet, unlines $ map unlines outMatInit, trained, unlines $ map unlines outMat)
+    return (initnet, outMatInit, trained, outMat)
 
 
 
-runNetFiltered :: Monad m => Network -> [[Double]] -> (Int, Int) -> (Vector Double -> Vector Double) -> m String
-runNetFiltered net samples (inputD, outputD) filterF = do
 
 
-    let outMat = [ [ render ( take inputD x, lastN outputD x, filterF (runNet net (vector (take inputD x))))
-                   | x <- samples ] ]
-                   where
-                     render (inputs, outputs, netResult) = "Inputs: " ++ show inputs ++ ", Expected Outputs: " ++ show outputs ++ ", Neural Network Results: " ++ show netResult
-
-    return $ unlines $ map unlines outMat
+runNetFiltered :: Network -> [[Double]] -> (Int, Int) -> (Vector Double -> Vector Double) -> [([Double], [Double], [Double])]
+runNetFiltered net samples (inputD, outputD) filterF = [ ( take inputD x, lastN outputD x, Numeric.LinearAlgebra.toList $ filterF (runNet net (vector (take inputD x)))) | x <- samples ]
 
 
+
+
+renderOutput :: [([Double], [Double], [Double])] -> String
+renderOutput samples = unlines $ map render samples
+                          where
+                            render (inputs, outputs, netResult) = "Inputs: " ++ show inputs ++ ", Expected Outputs: " ++ show outputs ++ ", Neural Network Results: " ++ show netResult
+
+
+-- definir funcao para checar precisao da rede
+checkAccuracy :: [([Double], [Double], [Double])] -> Double
+checkAccuracy xs = 100 * (foldr checkAc 0 xs) / fromIntegral(length xs)
+                      where
+
+                        checkAc (_, expO, netO) acc = if expO == netO then acc + 1 else acc   
 
 
 
@@ -278,25 +287,28 @@ main = do
 
     (netInit, outputInit, netTrained, outputS) <- netTrain initialNet
                                  (fromMaybe 0.0025   rate)
-                                 (fromMaybe 10000 n   )   -- init value 500000
+                                 (fromMaybe 1000 n   )   -- init value 500000
                                  samples
                                  dimensions
 
     putStrLn "\n\n\nImprimindo predicao nao treinada:\n"
-    putStrLn outputInit
+    putStrLn $ "\nAcuracia: " ++ show (checkAccuracy outputInit) ++ " %"
+    putStrLn $ renderOutput outputInit
+
     putStrLn "\n\n\nImprimindo predicao agora treinada:\n"
-    putStrLn outputS
+    putStrLn $ "\nAcuracia: " ++ show (checkAccuracy outputS) ++ " %"
+    putStrLn $ renderOutput outputS
     putStrLn "\n\n\nImprimindo predicao treinada, agora com filtro de saida da rede:\n"
-    filteredResults <- runNetFiltered netTrained samples dimensions (\x -> if x > 0.5 then 1 else 0)
-    putStrLn filteredResults
+    let filteredResults = runNetFiltered netTrained samples dimensions (\x -> if x > 0.5 then 1 else 0)
+    putStrLn $ "\nAcuracia: " ++ show (checkAccuracy filteredResults) ++ " %"
+    putStrLn $ renderOutput filteredResults
 
     putStrLn "\n\n\nImprimindo a rede inicial:\n"
     print netInit
     putStrLn "\n\n\nAgora imprimindo a rede final:\n"
     print netTrained
-    {-putStrLn =<< evalRandIO (netTest2 (fromMaybe 0.25   rate)
-                                     (fromMaybe 500000 n   )   -- init value 500000
-                            )-}
+    
+
     putStrLn "\n\nSalvando rede treinada em arquivo: redetreinada.tsnn...."
     BSL.writeFile "redetreinada.tsnn" $ encode netTrained
     putStrLn "\nCarregando rede treianda do arquivo e exibindo:"
