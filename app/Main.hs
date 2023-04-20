@@ -7,6 +7,8 @@
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleInstances #-}
+--{-# LANGUAGE TemplateHaskell #-}
+{-# OPTIONS_GHC -Wno-missing-export-lists #-}
 
 
 module Main where
@@ -27,6 +29,11 @@ import GHC.Generics
 import Data.Binary
 import qualified Data.ByteString.Lazy as BSL
 
+--import qualified Prelude as Numeric.LinearAlgebra
+
+-- Using hmatrix minimization methods
+--import Numeric.GSL.Minimization
+
 
 
 data Weights = W { wBiases :: !(Vector Double)  -- n
@@ -35,15 +42,17 @@ data Weights = W { wBiases :: !(Vector Double)  -- n
                   deriving (Generic)
 
 
-data Activation = Linear | Logistic | Tangent | Relu deriving (Show, Generic)
+data Activation = Linear | Logistic | Tangent | ReLu | LeakyReLu deriving (Show, Generic)
 
 
-getFunctions :: (Ord a, Floating a) => Activation -> (a -> a, a -> a)
+--getFunctions :: (Ord a, Floating a) => Activation -> (a -> a, a -> a)
+getFunctions :: Activation -> (Vector Double -> Vector Double, Vector Double -> Vector Double)
 getFunctions f = case f of
-                  Linear   -> (linear, linear')
-                  Logistic -> (logistic, logistic')
-                  Tangent  -> (tangent, tangent')
-                  Relu     -> (relu, relu')
+                  Linear      -> (linear, linear')
+                  Logistic    -> (logistic, logistic')
+                  Tangent     -> (tangent, tangent')
+                  ReLu        -> (relu, relu')
+                  LeakyReLu   -> (lrelu, lrelu')
 
 
 data Network :: Type where
@@ -101,14 +110,24 @@ tangent :: Floating a => a -> a
 tangent x = (exp x - exp (-x)) / (exp x + exp (-x))
 
 tangent' :: Floating a => a -> a
-tangent' x = 1 + (tangent x) * (tangent x)
+tangent' x = 1 + tangent x * tangent x
 
 
-relu :: (Ord a, Floating a) => a -> a
-relu x  = max x 0
+--relu :: (Ord a, Floating a) => a -> a
+relu :: Vector Double -> Vector Double
+--relu x = Numeric.LinearAlgebra.fromList $ map (max 0) $ Numeric.LinearAlgebra.toList x
+relu = cmap (max 0)
 
-relu' :: (Ord a, Floating a) => a -> a
-relu' x = if x >= 0 then 1 else 0
+--relu' :: (Ord a, Floating a) => a -> a
+relu' :: Vector Double -> Vector Double
+--relu' x = if x > 0 then Numeric.LinearAlgebra.fromList $ replicate (length $ Numeric.LinearAlgebra.toList x) 1 else Numeric.LinearAlgebra.fromList $ replicate (length $ Numeric.LinearAlgebra.toList x) 0
+relu' = cmap (\y -> if y > 0 then 1 else 0)
+
+lrelu :: Vector Double -> Vector Double
+lrelu  = cmap (\y -> max (0.01*y) y)
+
+lrelu' :: Vector Double -> Vector Double
+lrelu' = cmap (\y -> if y > 0 then 1 else 0.01)
 
 
 
@@ -120,8 +139,10 @@ derive h f x = (f (x+h) - f x) / h
 
 -- Definitions of functions to run the network itself
 
+-- randomNet inputD ReLu [(3, Logistic )] outputD
+
 runLayer :: Weights -> Vector Double -> Vector Double
-runLayer (W wB wN) v = wB + wN #> v
+runLayer (W wB wN) v = wB + (wN #> v)
 
 runNet :: Network -> Vector Double -> Vector Double
 runNet (O f w)      !v = let (function, _) = getFunctions f
@@ -141,6 +162,7 @@ randomWeights i o = do
     let wB = randomVector  seed1 Uniform o * 2 - 1
         wN = uniformSample seed2 o (replicate i (-1, 1))
     return $ W wB wN
+
 
 randomNet :: MonadRandom m => Int -> Activation -> [(Int, Activation)] -> Int -> m Network
 randomNet i f []     o =     O f <$> randomWeights i o
@@ -169,8 +191,8 @@ train rate x0 target = fst . go x0
               (function, derivative) = getFunctions f
               o    = function y
               -- the gradient (how much y affects the error)
-              --   (logistic' is the derivative of logistic)
               dEdy = derivative y * (o - target)
+
               -- new bias weights and node weights
               wB'  = wB - scale rate dEdy
               wN'  = wN - scale rate (dEdy `outer` x)
@@ -178,6 +200,7 @@ train rate x0 target = fst . go x0
               -- bundle of derivatives for next step
               dWs  = tr wN #> dEdy
           in  (O f w', dWs)
+
     -- handle the inner layers
     go !x ((f, w@(W wB wN)) :&~ n)
         = let y          = runLayer w x
@@ -187,6 +210,7 @@ train rate x0 target = fst . go x0
               (n', dWs') = go o n
               -- the gradient (how much y affects the error)
               dEdy       = derivative y * dWs'
+        
               -- new bias weights and node weights
               wB'  = wB - scale rate dEdy
               wN'  = wN - scale rate (dEdy `outer` x)
@@ -214,8 +238,8 @@ netTrain initnet learningrate nruns samples (inputD, outputD) = do
           where
             trainNTimes :: Network -> ([Vector Double], [Vector Double]) -> Int -> Network
             trainNTimes net (i, o) n2
-                | n2 == 0 = net
-                | otherwise = trainNTimes (foldl' trainEach net (zip i o)) (i, o) (n2 - 1)
+                | n2 <= 0 = net
+                | otherwise = trainNTimes (foldl' trainEach net (zip i o)) (i, o) (n2 - 1)  -- necessario dar um shuffle nos samples em cada iteracao, para aumenter aleatoriedade?
                         where
                             trainEach :: Network -> (Vector Double, Vector Double) -> Network
                             trainEach nt (i2, o2) = train learningrate i2 o2 nt
@@ -226,10 +250,14 @@ netTrain initnet learningrate nruns samples (inputD, outputD) = do
         outMat     = [ ( take inputD x, lastN outputD x, Numeric.LinearAlgebra.toList(runNet trained (vector (take inputD x))))
                        | x <- samples ]
 
-        render (inputs, outputs, netResult) = "Inputs: " ++ show inputs ++ ", Expected Outputs: " ++ show outputs ++ ", Neural Network Results: " ++ show netResult
 
-    --return (initnet, unlines $ map unlines outMatInit, trained, unlines $ map unlines outMat)
     return (initnet, outMatInit, trained, outMat)
+
+
+
+
+netPredict :: Network -> [[Double]] -> (Int, Int) -> [([Double], [Double], [Double])]
+netPredict neuralnet samples (inputD, outputD) = [ ( take inputD x, lastN outputD x, Numeric.LinearAlgebra.toList(runNet neuralnet (vector (take inputD x)))) | x <- samples ]
 
 
 
@@ -249,10 +277,10 @@ renderOutput samples = unlines $ map render samples
 
 -- definir funcao para checar precisao da rede
 checkAccuracy :: [([Double], [Double], [Double])] -> Double
-checkAccuracy xs = 100 * (foldr checkAc 0 xs) / fromIntegral(length xs)
+checkAccuracy xs = 100 * foldr checkAc 0 xs / fromIntegral(length xs)
                       where
 
-                        checkAc (_, expO, netO) acc = if expO == netO then acc + 1 else acc   
+                        checkAc (_, expO, netO) acc = if expO == netO then acc + 1 else acc
 
 
 
@@ -281,19 +309,21 @@ main = do
     let dimensions = (inputD, outputD) :: (Int, Int)
 
 
-    initialNet <- randomNet inputD Logistic [(20, Logistic)] outputD
+    initialNet <- randomNet inputD LeakyReLu [(5, ReLu )] outputD
+
+    putStrLn "\n\n\nImprimindo a rede inicial teste:\n"
+    print initialNet
+
 
     putStrLn "\n\nTraining network..."
 
-    (netInit, outputInit, netTrained, outputS) <- netTrain initialNet
-                                 (fromMaybe 0.0025   rate)
-                                 (fromMaybe 1000 n   )   -- init value 500000
+    (_, _, netTrained, outputS) <- netTrain initialNet
+                                 (fromMaybe 0.000025   rate)  -- init v 0.0025
+                                 (fromMaybe 10000 n   )   -- init value 150 log log 
                                  samples
                                  dimensions
 
-    putStrLn "\n\n\nImprimindo predicao nao treinada:\n"
-    putStrLn $ "\nAcuracia: " ++ show (checkAccuracy outputInit) ++ " %"
-    putStrLn $ renderOutput outputInit
+
 
     putStrLn "\n\n\nImprimindo predicao agora treinada:\n"
     putStrLn $ "\nAcuracia: " ++ show (checkAccuracy outputS) ++ " %"
@@ -303,11 +333,9 @@ main = do
     putStrLn $ "\nAcuracia: " ++ show (checkAccuracy filteredResults) ++ " %"
     putStrLn $ renderOutput filteredResults
 
-    putStrLn "\n\n\nImprimindo a rede inicial:\n"
-    print netInit
     putStrLn "\n\n\nAgora imprimindo a rede final:\n"
     print netTrained
-    
+
 
     putStrLn "\n\nSalvando rede treinada em arquivo: redetreinada.tsnn...."
     BSL.writeFile "redetreinada.tsnn" $ encode netTrained
