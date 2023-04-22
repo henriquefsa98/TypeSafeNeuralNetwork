@@ -29,6 +29,8 @@ import GHC.Generics
 import Data.Binary
 import qualified Data.ByteString.Lazy as BSL
 
+import System.Random.Shuffle
+
 --import qualified Prelude as Numeric.LinearAlgebra
 
 -- Using hmatrix minimization methods
@@ -42,7 +44,7 @@ data Weights = W { wBiases :: !(Vector Double)  -- n
                   deriving (Generic)
 
 
-data Activation = Linear | Logistic | Tangent | ReLu | LeakyReLu deriving (Show, Generic)
+data Activation = Linear | Logistic | Tangent | ReLu | LeakyReLu | ELU Double deriving (Show, Generic)
 
 
 --getFunctions :: (Ord a, Floating a) => Activation -> (a -> a, a -> a)
@@ -53,6 +55,7 @@ getFunctions f = case f of
                   Tangent     -> (tangent, tangent')
                   ReLu        -> (relu, relu')
                   LeakyReLu   -> (lrelu, lrelu')
+                  ELU a       -> (elu a, elu' a)
 
 
 data Network :: Type where
@@ -113,15 +116,12 @@ tangent' :: Floating a => a -> a
 tangent' x = 1 + tangent x * tangent x
 
 
---relu :: (Ord a, Floating a) => a -> a
 relu :: Vector Double -> Vector Double
---relu x = Numeric.LinearAlgebra.fromList $ map (max 0) $ Numeric.LinearAlgebra.toList x
 relu = cmap (max 0)
 
---relu' :: (Ord a, Floating a) => a -> a
 relu' :: Vector Double -> Vector Double
---relu' x = if x > 0 then Numeric.LinearAlgebra.fromList $ replicate (length $ Numeric.LinearAlgebra.toList x) 1 else Numeric.LinearAlgebra.fromList $ replicate (length $ Numeric.LinearAlgebra.toList x) 0
 relu' = cmap (\y -> if y > 0 then 1 else 0)
+
 
 lrelu :: Vector Double -> Vector Double
 lrelu  = cmap (\y -> max (0.01*y) y)
@@ -129,6 +129,12 @@ lrelu  = cmap (\y -> max (0.01*y) y)
 lrelu' :: Vector Double -> Vector Double
 lrelu' = cmap (\y -> if y > 0 then 1 else 0.01)
 
+
+elu :: Double -> Vector Double -> Vector Double 
+elu a  = cmap (\y -> if y >= 0 then y else a * (exp y - 1))
+
+elu' :: Double -> Vector Double -> Vector Double 
+elu' a  = cmap (\y -> if y >= 0 then 1 else a + (a * (exp y - 1)))
 
 
 -- Auxiliar way to define a derivative of a function, using limits (can be very unprecise)
@@ -228,21 +234,26 @@ lastN n xs = drop (length xs - n) xs
 
 
 -- atualizar para versao final de treino de rede: receber entradas E saidas, receber modelo inicial de rede construido fora da funcao de treino!
-netTrain :: (MonadRandom m) => Network -> Double -> Int -> [[Double]] -> (Int, Int) -> m (Network, [([Double], [Double], [Double])], Network, [([Double], [Double], [Double])])
+netTrain :: (MonadRandom m, MonadIO m) => Network -> Double -> Int -> [[Double]] -> (Int, Int) -> m (Network, [([Double], [Double], [Double])], Network, [([Double], [Double], [Double])])
 netTrain initnet learningrate nruns samples (inputD, outputD) = do
 
     let inps = map (Numeric.LinearAlgebra.fromList . take inputD) samples
     let outs = map (Numeric.LinearAlgebra.fromList . lastN outputD) samples
+
+    gen <- newStdGen
 
     let trained = trainNTimes initnet (inps, outs) nruns
           where
             trainNTimes :: Network -> ([Vector Double], [Vector Double]) -> Int -> Network
             trainNTimes net (i, o) n2
                 | n2 <= 0 = net
-                | otherwise = trainNTimes (foldl' trainEach net (zip i o)) (i, o) (n2 - 1)  -- necessario dar um shuffle nos samples em cada iteracao, para aumenter aleatoriedade?
+                | otherwise = trainNTimes (foldl' trainEach net (zip i o)) shuffledSamples (n2 - 1)  -- Shuffle the samples at every iteration of training
                         where
                             trainEach :: Network -> (Vector Double, Vector Double) -> Network
                             trainEach nt (i2, o2) = train learningrate i2 o2 nt
+
+                            zippedSamples = zip i o
+                            shuffledSamples = unzip (shuffle' zippedSamples (length zippedSamples) gen)
 
         outMatInit = [( take inputD x, lastN outputD x, Numeric.LinearAlgebra.toList(runNet initnet (vector (take inputD x))))
                        | x <- samples ]
@@ -255,7 +266,7 @@ netTrain initnet learningrate nruns samples (inputD, outputD) = do
 
 
 
-
+-- Network prediction with full responde, inputs, expected and predicted outputs
 netPredict :: Network -> [[Double]] -> (Int, Int) -> [([Double], [Double], [Double])]
 netPredict neuralnet samples (inputD, outputD) = [ ( take inputD x, lastN outputD x, Numeric.LinearAlgebra.toList(runNet neuralnet (vector (take inputD x)))) | x <- samples ]
 
@@ -309,7 +320,7 @@ main = do
     let dimensions = (inputD, outputD) :: (Int, Int)
 
 
-    initialNet <- randomNet inputD LeakyReLu [(5, ReLu )] outputD
+    initialNet <- randomNet inputD (ELU 0.5) [(5, Linear )] outputD
 
     putStrLn "\n\n\nImprimindo a rede inicial teste:\n"
     print initialNet
@@ -318,8 +329,8 @@ main = do
     putStrLn "\n\nTraining network..."
 
     (_, _, netTrained, outputS) <- netTrain initialNet
-                                 (fromMaybe 0.000025   rate)  -- init v 0.0025
-                                 (fromMaybe 10000 n   )   -- init value 150 log log 
+                                 (fromMaybe 0.00025   rate)  -- init v 0.0025
+                                 (fromMaybe 1000 n   )   -- init value 150 log log 
                                  samples
                                  dimensions
 
