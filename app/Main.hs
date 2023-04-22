@@ -142,10 +142,31 @@ derive :: (Fractional a) => a -> (a -> a) -> (a -> a)
 derive h f x = (f (x+h) - f x) / h
 
 
+-- Definiton of Filters to output of the neural network
+
+data Filter = BinaryOutput | SoftMax deriving Show
+
+
+getFilter :: Filter -> (Vector Double -> Vector Double)
+getFilter f = case f of 
+
+                BinaryOutput   ->   binaryOutput 
+                SoftMax        ->   softmaxOut
+
+
+-- Auxiliar definitions to  Filters
+
+binaryOutput :: Vector Double -> Vector Double
+binaryOutput = cmap (\y -> if y > 0.5 then 1 else 0)
+
+
+softmaxOut :: Vector Double -> Vector Double
+softmaxOut x = cmap (/ sumElements expX) expX
+              where
+                  expX = cmap exp x
+
 
 -- Definitions of functions to run the network itself
-
--- randomNet inputD ReLu [(3, Logistic )] outputD
 
 runLayer :: Weights -> Vector Double -> Vector Double
 runLayer (W wB wN) v = wB + (wN #> v)
@@ -274,9 +295,12 @@ netPredict neuralnet samples (inputD, outputD) = [ ( take inputD x, lastN output
 
 
 
-runNetFiltered :: Network -> [[Double]] -> (Int, Int) -> (Vector Double -> Vector Double) -> [([Double], [Double], [Double])]
-runNetFiltered net samples (inputD, outputD) filterF = [ ( take inputD x, lastN outputD x, Numeric.LinearAlgebra.toList $ filterF (runNet net (vector (take inputD x)))) | x <- samples ]
+runNetFiltered :: Network -> [[Double]] -> (Int, Int) -> Filter -> [([Double], [Double], [Double])]
+runNetFiltered net samples (inputD, outputD) filterF = [ ( take inputD x, lastN outputD x, Numeric.LinearAlgebra.toList $ nnFilter (runNet net (vector (take inputD x)))) | x <- samples ]
 
+                                                            where
+
+                                                              nnFilter = getFilter filterF
 
 
 
@@ -340,7 +364,7 @@ main = do
     putStrLn $ "\nAcuracia: " ++ show (checkAccuracy outputS) ++ " %"
     putStrLn $ renderOutput outputS
     putStrLn "\n\n\nImprimindo predicao treinada, agora com filtro de saida da rede:\n"
-    let filteredResults = runNetFiltered netTrained samples dimensions (\x -> if x > 0.5 then 1 else 0)
+    let filteredResults = runNetFiltered netTrained samples dimensions BinaryOutput
     putStrLn $ "\nAcuracia: " ++ show (checkAccuracy filteredResults) ++ " %"
     putStrLn $ renderOutput filteredResults
 
