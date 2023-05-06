@@ -30,6 +30,8 @@ import Data.Binary
 import qualified Data.ByteString.Lazy as BSL
 
 import System.Random.Shuffle
+import GHC.TypeLits (Nat)
+import Numeric.LinearAlgebra.Static(L, R)
 
 --import qualified Prelude as Numeric.LinearAlgebra
 
@@ -42,6 +44,13 @@ data Weights = W { wBiases :: !(Vector Double)  -- n
                  , wNodes  :: !(Matrix Double)  -- n x m
                  }                              -- "m to n" layer
                   deriving (Generic)
+
+
+data Weights2 i o = W2 { wBiases2  :: !(Numeric.LinearAlgebra.Static.R o)  -- n
+                        , wNodes2  :: !(L o i)  -- n x m
+                      }                              -- "m to n" layer
+                  deriving (Generic)
+
 
 
 data Activation = Linear | Logistic | Tangent | ReLu | LeakyReLu | ELU Double deriving (Show, Generic)
@@ -333,7 +342,7 @@ main = do
     args <- getArgs
     let n    = readMaybe =<< (args !!? 0)
         rate = readMaybe =<< (args !!? 1)
-    samplesFile <- readFile "/home/kali/Downloads/UFABC/PGC/Github/TypeSafeNeuralNetwork/inputs/inputs.txt"
+    samplesFile <- readFile "/home/kali/Downloads/UFABC/PGC/Github/TypeSafeNeuralNetwork/inputs/inputs30K.txt"
 
     -- Read input file to get all samples to train the neural network!
     let samples = stringToSamples samplesFile
@@ -343,6 +352,8 @@ main = do
     let outputD = 1 :: Int
     let dimensions = (inputD, outputD) :: (Int, Int)
 
+    -- Exemplo que mostra que a rede nao esta segura contra formas incoerentes...
+    testNet <- randomNet (-1) Linear [((-2), Linear)] (-3) 
 
     initialNet <- randomNet inputD (ELU 0.5) [(5, Linear )] outputD
 
@@ -355,18 +366,24 @@ main = do
     (_, _, netTrained, outputS) <- netTrain initialNet
                                  (fromMaybe 0.00025   rate)  -- init v 0.0025
                                  (fromMaybe 1000 n   )   -- init value 150 log log 
-                                 samples
+                                 (take 20000 samples)
                                  dimensions
 
 
 
     putStrLn "\n\n\nImprimindo predicao agora treinada:\n"
     putStrLn $ "\nAcuracia: " ++ show (checkAccuracy outputS) ++ " %"
-    putStrLn $ renderOutput outputS
+    --putStrLn $ renderOutput outputS
     putStrLn "\n\n\nImprimindo predicao treinada, agora com filtro de saida da rede:\n"
-    let filteredResults = runNetFiltered netTrained samples dimensions BinaryOutput
+    let filteredResults = runNetFiltered netTrained (take 20000 samples) dimensions BinaryOutput
     putStrLn $ "\nAcuracia: " ++ show (checkAccuracy filteredResults) ++ " %"
-    putStrLn $ renderOutput filteredResults
+    --putStrLn $ renderOutput filteredResults
+
+
+    putStrLn "\n\n\nVerificando agora a performance em samples que nao foram usadas no treino:" 
+    let filteredResultsFinal = runNetFiltered netTrained (drop 20000 samples) dimensions BinaryOutput
+    putStrLn $ "\nAcuracia: " ++ show (checkAccuracy filteredResultsFinal) ++ " %"
+    --putStrLn $ renderOutput filteredResultsFinal
 
     putStrLn "\n\n\nAgora imprimindo a rede final:\n"
     print netTrained
