@@ -28,6 +28,9 @@ dependencies:
 - bytestring
 - random-shuffle
 - hmatrix-vector-sized==0.1.3.0
+- vector-sized
+- singletons
+- singletons-base
 
 
 

@@ -39,7 +39,10 @@ library
     , hmatrix
     , hmatrix-vector-sized ==0.1.3.0
     , random-shuffle
+    , singletons
+    , singletons-base
     , vector ==0.12.3.1
+    , vector-sized
   default-language: Haskell2010
 
 executable TypeSafeNN-exe
@@ -58,7 +61,10 @@ executable TypeSafeNN-exe
     , hmatrix
     , hmatrix-vector-sized ==0.1.3.0
     , random-shuffle
+    , singletons
+    , singletons-base
     , vector ==0.12.3.1
+    , vector-sized
   default-language: Haskell2010
 
 test-suite TypeSafeNN-test
@@ -78,5 +84,8 @@ test-suite TypeSafeNN-test
     , hmatrix
     , hmatrix-vector-sized ==0.1.3.0
     , random-shuffle
+    , singletons
+    , singletons-base
     , vector ==0.12.3.1
+    , vector-sized
   default-language: Haskell2010

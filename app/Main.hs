@@ -12,6 +12,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE PolyKinds #-}
 
 
 module Main where
@@ -24,7 +25,7 @@ import Control.Monad.Random
 import Data.List ( foldl' )
 import GHC.Float ()
 import Data.Maybe
-import Numeric.LinearAlgebra
+--import Numeric.LinearAlgebra
 import System.Environment
 import Text.Read
 import Data.Kind (Type)
@@ -34,20 +35,35 @@ import qualified Data.ByteString.Lazy as BSL
 
 import System.Random.Shuffle
 import GHC.TypeLits (Nat, KnownNat)
-import Numeric.LinearAlgebra.Static(L, R)
+import GHC.TypeLits.Singletons
+import Numeric.LinearAlgebra
+--import Numeric.LinearAlgebra.Static
 
 import Numeric.LinearAlgebra.Static.Vector as StaticVector
+
+import qualified Data.Vector.Storable.Sized as SV
+import qualified Numeric.LinearAlgebra.Static as SA
+
+import Data.Singletons
+
+
 
 --import qualified Prelude as Numeric.LinearAlgebra
 
 -- Using hmatrix minimization methods
 --import Numeric.GSL.Minimization
 
+--data family Sing (x :: k)
+
+data SList xs where
+  SNil  :: SList '[]
+  SCons :: Sing x -> SList xs -> SList (x ': xs)
 
 
 
-data Weights i o = W { wBiases  :: !(Numeric.LinearAlgebra.Static.R o)  -- n
-                        , wNodes  :: !(L o i)  -- n x m
+
+data Weights i o = W { wBiases  :: !(SA.R o)  -- n
+                        , wNodes  :: !(SA.L o i)  -- n x m
                       }                              -- "m to n" layer
                   deriving (Generic)
 
@@ -57,7 +73,7 @@ data Activation = Linear | Logistic | Tangent | ReLu | LeakyReLu | ELU Double de
 
 
 --getFunctions :: (Ord a, Floating a) => Activation -> (a -> a, a -> a)
-getFunctions :: Activation -> (Numeric.LinearAlgebra.Static.R i -> Numeric.LinearAlgebra.Static.R i, Numeric.LinearAlgebra.Static.R i -> Numeric.LinearAlgebra.Static.R i)
+getFunctions :: Activation -> (SA.R i -> SA.R i, SA.R i -> SA.R i)
 getFunctions f = case f of
                   Linear      -> (linear, linear')
                   Logistic    -> (logistic, logistic')
@@ -67,13 +83,13 @@ getFunctions f = case f of
                   ELU a       -> (elu a, elu' a)
 
 
-data Network :: Nat -> Activation -> [Nat]  -> [Activation] -> Nat -> * where
+data Network :: Nat -> Activation -> [(Nat, Activation)] -> Nat -> * where
     O     :: !(Weights i o) -> Activation
-          -> Network i f '[] '[] o
-    (:&~) :: KnownNat h
+          -> Network i f '[] o
+    (:&~) :: (KnownNat h, SingI hs)
           => (Weights i h , Activation)
-          -> !(Network h f2 hs fs o)
-          -> Network i f (h ': hs) (f2 ': fs) o
+          -> !(Network h f2 hs o)
+          -> Network i f ((h, f2) ': hs :: [(Nat, Activation)])  o
 infixr 5 :&~
 
 
@@ -125,34 +141,34 @@ tangent' :: Floating a => a -> a
 tangent' x = 1 + tangent x * tangent x
 
 
---relu :: KnownNat i => Numeric.LinearAlgebra.Static.R i -> Numeric.LinearAlgebra.Static.R i
+--relu :: KnownNat i => SA.R i -> SA.R i
 relu :: Floating a => a -> a
 relu = (max 0)
 
---relu' :: Numeric.LinearAlgebra.Static.R i -> Numeric.LinearAlgebra.Static.R i
+--relu' :: SA.R i -> SA.R i
 relu' ::Floating a => a -> a
 relu' x = if x > 0 then 1 else 0
 
 
---lrelu :: Numeric.LinearAlgebra.Static.R i -> Numeric.LinearAlgebra.Static.R i
+--lrelu :: SA.R i -> SA.R i
 lrelu :: Floating a => a -> a
 lrelu y = max (0.01*y) y
 
-lrelu' :: Numeric.LinearAlgebra.Static.R i -> Numeric.LinearAlgebra.Static.R i
+lrelu' :: SA.R i -> SA.R i
 lrelu' y = if y > 0 then 1 else 0.01
 
 
---elu :: Double -> Numeric.LinearAlgebra.Static.R i -> Numeric.LinearAlgebra.Static.R i
+--elu :: Double -> SA.R i -> SA.R i
 --elu :: Floating a => a -> a -> a
 --elu a  = (\y -> if y >= 0 then y else a * (exp y - 1))
 
-elu :: (KnownNat n) => Double -> Numeric.LinearAlgebra.Static.R n -> Numeric.LinearAlgebra.Static.R n
-elu a y = StaticVector.vecR $ cmap (\x -> if x >= 0 then x else a * (exp x - 1)) StaticVector.rVec y
+elu :: (KnownNat n) => Double -> SA.R n -> SA.R n
+elu a y = StaticVector.vecR $ cmap (\x -> if x >= 0 then x else a * (exp x - 1)) $ StaticVector.rVec y
 
 
---elu' :: Double -> Numeric.LinearAlgebra.Static.R i -> Numeric.LinearAlgebra.Static.R i
-elu' :: (Floating a) => a -> a -> a
-elu' a  = (\y -> if y >= 0 then 1 else a + a * (exp y - 1))
+--elu' :: Double -> SA.R i -> SA.R i
+elu' :: (KnownNat n) => Double -> SA.R n -> SA.R n
+elu' a y = StaticVector.vecR $ cmap (\x -> if x >= 0 then 1 else a + a * (exp x - 1)) $ StaticVector.rVec y
 
 
 -- Auxiliar way to define a derivative of a function, using limits (can be very unprecise)
@@ -165,7 +181,7 @@ derive h f x = (f (x+h) - f x) / h
 data Filter = BinaryOutput | SoftMax deriving Show
 
 
-getFilter :: Filter -> (Vector Double -> Vector Double)
+getFilter :: Filter -> (SA.R i-> SA.R i)
 getFilter f = case f of
 
                 BinaryOutput   ->   binaryOutput
@@ -174,45 +190,51 @@ getFilter f = case f of
 
 -- Auxiliar definitions to  Filters
 
-binaryOutput :: Vector Double -> Vector Double
-binaryOutput = cmap (\y -> if y > 0.5 then 1 else 0)
+binaryOutput :: SA.R i -> SA.R i
+binaryOutput x = StaticVector.vecR $ cmap (\y -> if y > 0.5 then 1 else 0) $ StaticVector.rVec x
 
 
-softmaxOut :: Vector Double -> Vector Double
-softmaxOut x = cmap (/ sumElements expX) expX
+softmaxOut :: SA.R i -> SA.R i
+softmaxOut x = StaticVector.vecR $ cmap (/ sumElements expX) expX
               where
-                  expX = cmap exp x
+                  expX = cmap exp $ StaticVector.rVec x
 
 
 -- Definitions of functions to run the network itself
 
-runLayer :: (KnownNat i, KnownNat o) => Weights i o -> Numeric.LinearAlgebra.Static.R i -> Numeric.LinearAlgebra.Static.R o
-runLayer (W wB wN) v = wB + (wN #> v)
+runLayer :: (KnownNat i, KnownNat o) => Weights i o -> SA.R i -> SA.R o
+runLayer (W wB wN) v = wB + (wN SA.#> v)
 
 
-runNet :: (KnownNat i, KnownNat o) => Network i f hs fs o -> Numeric.LinearAlgebra.Static.R i -> Numeric.LinearAlgebra.Static.R o
+runNet :: (KnownNat i, KnownNat o) => Network i f hs fs o -> SA.R i -> SA.R o
 runNet = \case
-   O w f -> \(!v) -> getFunctions f (runLayer w v)
-   ((w, f) :&~ n') -> \(!v) -> let v' = logistic (runLayer w v)
-                          in runNet n' v'
+   O w f -> \(!v)  ->          let (function, _) = getFunctions f
+                                in function (runLayer w v)
+
+   ((w, f) :&~ n') -> \(!v) -> let
+                                  (function, _) = getFunctions f
+                                  v' = function (runLayer w v)
+                                in  runNet n' v'
 
 -- Definitions of functions to generate a random network
 
-randomWeights :: MonadRandom m => Int -> Int -> m (Weights i o)
-randomWeights i o = do
+randomWeights :: (MonadRandom m, KnownNat i, KnownNat o) => m (Weights i o)
+randomWeights = do
     seed1 :: Int <- getRandom
     seed2 :: Int <- getRandom
-    let wB = randomVector  seed1 Uniform o * 2 - 1
-        wN = uniformSample seed2 o (replicate i (-1, 1))
+    let wB = SA.randomVector  seed1 Uniform * 2 - 1
+        wN = SA.uniformSample seed2 (-1) 1
     return $ W wB wN
 
 
-randomNet :: MonadRandom m => Int -> Activation -> [(Int, Activation)] -> Int -> m (Network i f hs fs o)
-randomNet i f []     o =     O f <$> randomWeights i o
-randomNet i f ((h,f2):hs) o = do
-                                w <- randomWeights i h
-                                (:&~) (f, w)  <$> randomNet h f2 hs o
-
+randomNet :: forall m i f hs o. (MonadRandom m, KnownNat i, SingI hs, KnownNat o) => Activation -> Sing (hs :: [(Nat, Activation)]) -> m (Network i f hs o)
+randomNet activation = go activation sing
+  where
+    go :: forall h f' hs' fs'. KnownNat h
+       => Activation -> Sing hs'
+       -> m (Network h f' hs' fs' o)
+    go f' SNil              =  O f'   <$> randomWeights
+    go f' (SNat `SCons` ss) = f' (:&~)  <$> randomWeights <*> go ss
 
 
 
@@ -292,10 +314,10 @@ netTrain initnet learningrate nruns samples (inputD, outputD) = do
                             zippedSamples = zip i o
                             shuffledSamples = unzip (shuffle' zippedSamples (length zippedSamples) gen)
 
-        outMatInit = [( take inputD x, lastN outputD x, Numeric.LinearAlgebra.toList(runNet initnet (vector (take inputD x))))
+        outMatInit = [( take inputD x, lastN outputD x, Numeric.LinearAlgebra.toList $ SA.extract $ (runNet initnet (SA.vector (take inputD x))))
                        | x <- samples ]
 
-        outMat     = [ ( take inputD x, lastN outputD x, Numeric.LinearAlgebra.toList(runNet trained (vector (take inputD x))))
+        outMat     = [ ( take inputD x, lastN outputD x, Numeric.LinearAlgebra.toList $ SA.extract $ (runNet trained (SA.vector (take inputD x))))
                        | x <- samples ]
 
 
@@ -305,14 +327,14 @@ netTrain initnet learningrate nruns samples (inputD, outputD) = do
 
 -- Network prediction with full responde, inputs, expected and predicted outputs
 netPredict :: Network i f hs fs o -> [[Double]] -> (Int, Int) -> [([Double], [Double], [Double])]
-netPredict neuralnet samples (inputD, outputD) = [ ( take inputD x, lastN outputD x, Numeric.LinearAlgebra.toList(runNet neuralnet (vector (take inputD x)))) | x <- samples ]
+netPredict neuralnet samples (inputD, outputD) = [ ( take inputD x, lastN outputD x, Numeric.LinearAlgebra.toList $ SA.extract $ (runNet neuralnet (SA.vector (take inputD x)))) | x <- samples ]
 
 
 
 
 
 runNetFiltered :: Network i f hs fs o -> [[Double]] -> (Int, Int) -> Filter -> [([Double], [Double], [Double])]
-runNetFiltered net samples (inputD, outputD) filterF = [ ( take inputD x, lastN outputD x, Numeric.LinearAlgebra.toList $ nnFilter (runNet net (StaticVector.vecR vector (take inputD x)))) | x <- samples ]
+runNetFiltered net samples (inputD, outputD) filterF = [ ( take inputD x, lastN outputD x, Numeric.LinearAlgebra.toList $ SA.extract $ nnFilter (runNet net ( SA.vector (take inputD x)))) | x <- samples ]
 
                                                             where
 
