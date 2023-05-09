@@ -7,13 +7,15 @@
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleInstances #-}
---{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# OPTIONS_GHC -Wno-missing-export-lists #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE PolyKinds #-}
-
+{-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Main where
 
@@ -45,7 +47,8 @@ import qualified Data.Vector.Storable.Sized as SV
 import qualified Numeric.LinearAlgebra.Static as SA
 
 import Data.Singletons
-
+import Data.List.Singletons
+import Data.Singletons.TH as TH
 
 
 --import qualified Prelude as Numeric.LinearAlgebra
@@ -55,10 +58,11 @@ import Data.Singletons
 
 --data family Sing (x :: k)
 
+{-
 data SList xs where
   SNil  :: SList '[]
   SCons :: Sing x -> SList xs -> SList (x ': xs)
-
+-}
 
 
 
@@ -70,6 +74,20 @@ data Weights i o = W { wBiases  :: !(SA.R o)  -- n
 
 
 data Activation = Linear | Logistic | Tangent | ReLu | LeakyReLu | ELU Double deriving (Show, Generic)
+
+{-
+-- Define the promoted version of Activation
+data SActivation :: Activation -> Type where
+  SLinear :: SActivation 'Linear
+  SLogistic :: SActivation 'Logistic
+  STangent :: SActivation 'Tangent
+  SReLu :: SActivation 'ReLu
+  SLeakyReLu :: SActivation 'LeakyReLu
+  SELU :: Double -> SActivation ('ELU a)
+-}
+
+-- Generate the singleton instances for Activation
+-- $(TH.genSingletons [''Activation])
 
 
 --getFunctions :: (Ord a, Floating a) => Activation -> (a -> a, a -> a)
@@ -83,36 +101,36 @@ getFunctions f = case f of
                   ELU a       -> (elu a, elu' a)
 
 
-data Network :: Nat -> Activation -> [(Nat, Activation)] -> Nat -> * where
+data Network :: Nat -> [Nat] -> Nat -> * where
     O     :: !(Weights i o) -> Activation
-          -> Network i f '[] o
+          -> Network i '[] o
     (:&~) :: (KnownNat h, SingI hs)
-          => (Weights i h , Activation)
-          -> !(Network h f2 hs o)
-          -> Network i f ((h, f2) ': hs :: [(Nat, Activation)])  o
+          => Weights i h -> Activation
+          -> !(Network h hs o)
+          -> Network i (h ': hs)  o
 infixr 5 :&~
 
 
-instance Show (Network i f hs fs o) where        -- Implementacao de instancia de show de Network para facilitar o debug
-  show :: Network i f hs fs o -> String
+instance Show (Network i hs o) where        -- Implementacao de instancia de show de Network para facilitar o debug
+  show :: Network i hs o -> String
   show (O a f)          =  "Nos de saida: " ++ show (wNodes a) ++ ", Pesos: " ++ show (wBiases a) ++ ", Funcao de Ativacao: " ++ show f
-  show ((a , f) :&~ b)  =  "Nos camada: "   ++ show (wNodes a) ++ ", Pesos: " ++ show (wBiases a) ++ ", Funcao de Ativacao: " ++ show f ++ "\n" ++ show b
+  show ((:&~) a f b)  =  "Nos camada: "   ++ show (wNodes a) ++ ", Pesos: " ++ show (wBiases a) ++ ", Funcao de Ativacao: " ++ show f ++ "\n" ++ show b
 
 
 -- Definicao de instancias para serializar a rede:
 
 instance Binary (Weights i o)
 instance Binary Activation
-instance Binary (Network i f hs fs o)
+instance Binary (Network i hs o)
 
 -- Definicao de funcoes para serializar e desserializar a rede
 
 -- Serializa um modelo de Rede para uma ByteString
-serializeNetwork :: Network i f hs fs o -> BSL.ByteString
+serializeNetwork :: Network i hs o -> BSL.ByteString
 serializeNetwork = encode
 
 -- Desserializa um modelo de Rede a partir de uma ByteString
-deserializeNetwork :: BSL.ByteString -> Network i f hs fs o
+deserializeNetwork :: BSL.ByteString -> Network i hs o
 deserializeNetwork = decode
 
 
@@ -176,12 +194,12 @@ derive :: (Fractional a) => a -> (a -> a) -> (a -> a)
 derive h f x = (f (x+h) - f x) / h
 
 
--- Definiton of Filters to output of the neural network
+-- Definiton of NetFilters to output of the neural network
 
-data Filter = BinaryOutput | SoftMax deriving Show
+data NetFilter = BinaryOutput | SoftMax deriving Show
 
 
-getFilter :: Filter -> (SA.R i-> SA.R i)
+getFilter :: NetFilter -> (SA.R i-> SA.R i)
 getFilter f = case f of
 
                 BinaryOutput   ->   binaryOutput
@@ -206,12 +224,12 @@ runLayer :: (KnownNat i, KnownNat o) => Weights i o -> SA.R i -> SA.R o
 runLayer (W wB wN) v = wB + (wN SA.#> v)
 
 
-runNet :: (KnownNat i, KnownNat o) => Network i f hs fs o -> SA.R i -> SA.R o
+runNet :: (KnownNat i, KnownNat o) => Network i hs o -> SA.R i -> SA.R o
 runNet = \case
    O w f -> \(!v)  ->          let (function, _) = getFunctions f
                                 in function (runLayer w v)
 
-   ((w, f) :&~ n') -> \(!v) -> let
+   ((:&~) w f n') -> \(!v) -> let
                                   (function, _) = getFunctions f
                                   v' = function (runLayer w v)
                                 in  runNet n' v'
@@ -227,31 +245,45 @@ randomWeights = do
     return $ W wB wN
 
 
-randomNet :: forall m i f hs o. (MonadRandom m, KnownNat i, SingI hs, KnownNat o) => Activation -> Sing (hs :: [(Nat, Activation)]) -> m (Network i f hs o)
-randomNet activation = go activation sing
-  where
-    go :: forall h f' hs' fs'. KnownNat h
-       => Activation -> Sing hs'
-       -> m (Network h f' hs' fs' o)
-    go f' SNil              =  O f'   <$> randomWeights
-    go f' (SNat `SCons` ss) = f' (:&~)  <$> randomWeights <*> go ss
+getAct :: [Activation] -> Activation
+getAct (a:as) = a
+getAct []     = Linear
 
+randomNet :: forall m i hs o. (MonadRandom m, KnownNat i, SingI hs, KnownNat o)
+          => Sing hs
+          -> [Activation]
+          -> m (Network i hs o)
+randomNet  hiddenSizes hiddenActivations = go  hiddenSizes hiddenActivations
+  where
+    go :: forall h  hs' . (KnownNat h, SingI hs')
+       => Sing hs'
+       -> [Activation]
+       -> m (Network h  hs' o)
+    go SNil actL = do 
+                        weights <- randomWeights
+                        return $ O weights (getAct actL)
+    go (SCons size sizes) actL = do
+                                                    weights <- randomWeights 
+                                                    rest <- go sizes (tail actL) 
+                                                    return $ (:&~) weights (getAct actL) rest
+                                                
+    go _ _  = error "Mismatch between hidden sizes and activations"
 
 
 -- Training function, train the network for just one iteration
 
 train :: Double           -- ^ learning rate
-      -> Vector Double    -- ^ input vector
-      -> Vector Double    -- ^ target vector
-      -> Network i f hs fs o          -- ^ network to train
-      -> Network i f hs fs o
+      -> SA.R i    -- ^ input vector
+      -> SA.R o    -- ^ target vector
+      -> Network i hs o          -- ^ network to train
+      -> Network i hs o
 train rate x0 target = fst . go x0
   where
-    go :: Vector Double    -- ^ input vector
-       -> Network i f hs fs o          -- ^ network to train
-       -> (Network i f hs fs o, Vector Double)
+    go :: SA.R i    -- ^ input vector
+       -> Network i hs o          -- ^ network to train
+       -> (Network i hs o, SA.R o)
     -- handle the output layer
-    go !x (O f w@(W wB wN))
+    go !x (O w@(W wB wN) f)
         = let y    = runLayer w x
               (function, derivative) = getFunctions f
               o    = function y
@@ -293,7 +325,7 @@ lastN n xs = drop (length xs - n) xs
 
 
 -- atualizar para versao final de treino de rede: receber entradas E saidas, receber modelo inicial de rede construido fora da funcao de treino!
-netTrain :: (MonadRandom m, MonadIO m) =>  Network i f hs fs o -> Double -> Int -> [[Double]] -> (Int, Int) -> m (Network i f hs fs o, [([Double], [Double], [Double])], Network i f hs fs o, [([Double], [Double], [Double])])
+netTrain :: (MonadRandom m, MonadIO m) =>  Network i hs o -> Double -> Int -> [[Double]] -> (Int, Int) -> m (Network i hs o, [([Double], [Double], [Double])], Network i hs o, [([Double], [Double], [Double])])
 netTrain initnet learningrate nruns samples (inputD, outputD) = do
 
     let inps = map (Numeric.LinearAlgebra.fromList . take inputD) samples
@@ -303,12 +335,12 @@ netTrain initnet learningrate nruns samples (inputD, outputD) = do
 
     let trained = trainNTimes initnet (inps, outs) nruns
           where
-            trainNTimes :: Network i f hs fs o -> ([Vector Double], [Vector Double]) -> Int -> Network i f hs fs o
+            trainNTimes :: Network i hs o -> ([Vector Double], [Vector Double]) -> Int -> Network i hs o
             trainNTimes net (i, o) n2
                 | n2 <= 0 = net
                 | otherwise = trainNTimes (foldl' trainEach net (zip i o)) shuffledSamples (n2 - 1)  -- Shuffle the samples at every iteration of training
                         where
-                            trainEach :: Network i f hs fs o -> (Vector Double, Vector Double) -> Network i f hs fs o
+                            trainEach :: Network i hs o -> (Vector Double, Vector Double) -> Network i hs o
                             trainEach nt (i2, o2) = train learningrate i2 o2 nt
 
                             zippedSamples = zip i o
@@ -326,14 +358,14 @@ netTrain initnet learningrate nruns samples (inputD, outputD) = do
 
 
 -- Network prediction with full responde, inputs, expected and predicted outputs
-netPredict :: Network i f hs fs o -> [[Double]] -> (Int, Int) -> [([Double], [Double], [Double])]
+netPredict :: Network i hs o -> [[Double]] -> (Int, Int) -> [([Double], [Double], [Double])]
 netPredict neuralnet samples (inputD, outputD) = [ ( take inputD x, lastN outputD x, Numeric.LinearAlgebra.toList $ SA.extract $ (runNet neuralnet (SA.vector (take inputD x)))) | x <- samples ]
 
 
 
 
 
-runNetFiltered :: Network i f hs fs o -> [[Double]] -> (Int, Int) -> Filter -> [([Double], [Double], [Double])]
+runNetFiltered :: Network i hs o -> [[Double]] -> (Int, Int) -> NetFilter -> [([Double], [Double], [Double])]
 runNetFiltered net samples (inputD, outputD) filterF = [ ( take inputD x, lastN outputD x, Numeric.LinearAlgebra.toList $ SA.extract $ nnFilter (runNet net ( SA.vector (take inputD x)))) | x <- samples ]
 
                                                             where
