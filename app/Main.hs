@@ -16,6 +16,7 @@
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
 
 module Main where
 
@@ -38,8 +39,8 @@ import qualified Data.ByteString.Lazy as BSL
 import System.Random.Shuffle
 import GHC.TypeLits (Nat, KnownNat)
 import GHC.TypeLits.Singletons
-import Numeric.LinearAlgebra
---import Numeric.LinearAlgebra.Static
+import Numeric.LinearAlgebra as NonStatic
+import Numeric.LinearAlgebra.Static
 
 import Numeric.LinearAlgebra.Static.Vector as StaticVector
 
@@ -49,6 +50,8 @@ import qualified Numeric.LinearAlgebra.Static as SA
 import Data.Singletons
 import Data.List.Singletons
 import Data.Singletons.TH as TH
+import Control.Exception (NestedAtomically(NestedAtomically))
+import qualified Numeric.LinearAlgebra.Static.Vector as SV
 
 
 --import qualified Prelude as Numeric.LinearAlgebra
@@ -91,7 +94,7 @@ data SActivation :: Activation -> Type where
 
 
 --getFunctions :: (Ord a, Floating a) => Activation -> (a -> a, a -> a)
-getFunctions :: Activation -> (SA.R i -> SA.R i, SA.R i -> SA.R i)
+getFunctions :: (KnownNat i) => Activation -> (SA.R i -> SA.R i, SA.R i -> SA.R i)
 getFunctions f = case f of
                   Linear      -> (linear, linear')
                   Logistic    -> (logistic, logistic')
@@ -101,17 +104,18 @@ getFunctions f = case f of
                   ELU a       -> (elu a, elu' a)
 
 
-data Network :: Nat -> [Nat] -> Nat -> * where
+data Network :: Nat -> [Nat] -> Nat -> Type where
     O     :: !(Weights i o) -> Activation
           -> Network i '[] o
     (:&~) :: (KnownNat h, SingI hs)
           => Weights i h -> Activation
           -> !(Network h hs o)
           -> Network i (h ': hs)  o
+                                    --deriving (Generic)
 infixr 5 :&~
 
 
-instance Show (Network i hs o) where        -- Implementacao de instancia de show de Network para facilitar o debug
+instance (KnownNat i, KnownNat o) => Show (Network i hs o) where        -- Implementacao de instancia de show de Network para facilitar o debug
   show :: Network i hs o -> String
   show (O a f)          =  "Nos de saida: " ++ show (wNodes a) ++ ", Pesos: " ++ show (wBiases a) ++ ", Funcao de Ativacao: " ++ show f
   show ((:&~) a f b)  =  "Nos camada: "   ++ show (wNodes a) ++ ", Pesos: " ++ show (wBiases a) ++ ", Funcao de Ativacao: " ++ show f ++ "\n" ++ show b
@@ -119,9 +123,9 @@ instance Show (Network i hs o) where        -- Implementacao de instancia de sho
 
 -- Definicao de instancias para serializar a rede:
 
-instance Binary (Weights i o)
+instance (KnownNat i, KnownNat o) => Binary (Weights i o)
 instance Binary Activation
-instance Binary (Network i hs o)
+instance (KnownNat i, KnownNat o) => Binary (Network i hs o)
 
 -- Definicao de funcoes para serializar e desserializar a rede
 
@@ -250,38 +254,39 @@ getAct (a:as) = a
 getAct []     = Linear
 
 randomNet :: forall m i hs o. (MonadRandom m, KnownNat i, SingI hs, KnownNat o)
-          => Sing hs
-          -> [Activation]
+          => [Activation]
           -> m (Network i hs o)
-randomNet  hiddenSizes hiddenActivations = go  hiddenSizes hiddenActivations
+randomNet  hiddenActivations = go  sing hiddenActivations
   where
     go :: forall h  hs' . (KnownNat h, SingI hs')
        => Sing hs'
        -> [Activation]
        -> m (Network h  hs' o)
-    go SNil actL = do 
+    go SNil actL = do
                         weights <- randomWeights
                         return $ O weights (getAct actL)
     go (SCons size sizes) actL = do
-                                                    weights <- randomWeights 
-                                                    rest <- go sizes (tail actL) 
+                                                    weights <- randomWeights
+                                                    rest <- go sizes (tail actL)
                                                     return $ (:&~) weights (getAct actL) rest
-                                                
+
     go _ _  = error "Mismatch between hidden sizes and activations"
 
 
 -- Training function, train the network for just one iteration
 
-train :: Double           -- ^ learning rate
+train :: forall i hs o. (KnownNat i, KnownNat o)
+      => Double           -- ^ learning rate
       -> SA.R i    -- ^ input vector
       -> SA.R o    -- ^ target vector
       -> Network i hs o          -- ^ network to train
       -> Network i hs o
 train rate x0 target = fst . go x0
   where
-    go :: SA.R i    -- ^ input vector
-       -> Network i hs o          -- ^ network to train
-       -> (Network i hs o, SA.R o)
+    go :: forall j js. KnownNat j
+        => SA.R j    -- ^ input vector
+        -> Network j js o          -- ^ network to train
+        -> (Network j js o, SA.R j)
     -- handle the output layer
     go !x (O w@(W wB wN) f)
         = let y    = runLayer w x
@@ -291,15 +296,15 @@ train rate x0 target = fst . go x0
               dEdy = derivative y * (o - target)
 
               -- new bias weights and node weights
-              wB'  = wB - scale rate dEdy
-              wN'  = wN - scale rate (dEdy `outer` x)
+              wB'  = wB - SA.konst rate * dEdy
+              wN'  = wN - SA.konst rate * (SA.outer dEdy x)
               w'   = W wB' wN'
               -- bundle of derivatives for next step
-              dWs  = tr wN #> dEdy
-          in  (O f w', dWs)
+              dWs  = tr wN SA.#> dEdy
+          in  (O w' f, dWs)
 
     -- handle the inner layers
-    go !x ((f, w@(W wB wN)) :&~ n)
+    go !x ((:&~ ) w@(W wB wN) f n)
         = let y          = runLayer w x
               (function, derivative) = getFunctions f
               o          = function y
@@ -309,12 +314,12 @@ train rate x0 target = fst . go x0
               dEdy       = derivative y * dWs'
 
               -- new bias weights and node weights
-              wB'  = wB - scale rate dEdy
-              wN'  = wN - scale rate (dEdy `outer` x)
+              wB'  = wB - SA.konst rate dEdy
+              wN'  = wN - SA.konst rate (SA.outer dEdy  x)
               w'   = W wB' wN'
               -- bundle of derivatives for next step
-              dWs  = tr wN #> dEdy
-          in  ((f, w') :&~ n', dWs)
+              dWs  = tr wN SA.#> dEdy
+          in  ((:&~) w' f n', dWs)
 
 
 
@@ -325,31 +330,31 @@ lastN n xs = drop (length xs - n) xs
 
 
 -- atualizar para versao final de treino de rede: receber entradas E saidas, receber modelo inicial de rede construido fora da funcao de treino!
-netTrain :: (MonadRandom m, MonadIO m) =>  Network i hs o -> Double -> Int -> [[Double]] -> (Int, Int) -> m (Network i hs o, [([Double], [Double], [Double])], Network i hs o, [([Double], [Double], [Double])])
+netTrain :: (MonadRandom m, MonadIO m, KnownNat i, KnownNat o, SingI hs) =>  Network i hs o -> Double -> Int -> [[Double]] -> (Int, Int) -> m (Network i hs o, [([Double], [Double], [Double])], Network i hs o, [([Double], [Double], [Double])])
 netTrain initnet learningrate nruns samples (inputD, outputD) = do
 
-    let inps = map (Numeric.LinearAlgebra.fromList . take inputD) samples
-    let outs = map (Numeric.LinearAlgebra.fromList . lastN outputD) samples
+    let inps = map (SA.vector . take inputD) samples
+    let outs = map (SA.vector . lastN outputD) samples
 
     gen <- newStdGen
 
     let trained = trainNTimes initnet (inps, outs) nruns
           where
-            trainNTimes :: Network i hs o -> ([Vector Double], [Vector Double]) -> Int -> Network i hs o
+            trainNTimes :: (KnownNat i, SingI hs, KnownNat o) => Network i hs o -> ([SA.R i], [SA.R o]) -> Int -> Network i hs o
             trainNTimes net (i, o) n2
                 | n2 <= 0 = net
                 | otherwise = trainNTimes (foldl' trainEach net (zip i o)) shuffledSamples (n2 - 1)  -- Shuffle the samples at every iteration of training
                         where
-                            trainEach :: Network i hs o -> (Vector Double, Vector Double) -> Network i hs o
+                            trainEach :: (KnownNat i, SingI hs, KnownNat o) => Network i hs o -> (SA.R i, SA.R o) -> Network i hs o
                             trainEach nt (i2, o2) = train learningrate i2 o2 nt
 
                             zippedSamples = zip i o
                             shuffledSamples = unzip (shuffle' zippedSamples (length zippedSamples) gen)
 
-        outMatInit = [( take inputD x, lastN outputD x, Numeric.LinearAlgebra.toList $ SA.extract $ (runNet initnet (SA.vector (take inputD x))))
+        outMatInit = [( take inputD x, lastN outputD x, SV.toList $ SV.rVec $ (runNet initnet (SA.vector (take inputD x))))
                        | x <- samples ]
 
-        outMat     = [ ( take inputD x, lastN outputD x, Numeric.LinearAlgebra.toList $ SA.extract $ (runNet trained (SA.vector (take inputD x))))
+        outMat     = [ ( take inputD x, lastN outputD x, SV.toList $ SV.rVec $ (runNet trained (SA.vector (take inputD x))))
                        | x <- samples ]
 
 
@@ -358,15 +363,15 @@ netTrain initnet learningrate nruns samples (inputD, outputD) = do
 
 
 -- Network prediction with full responde, inputs, expected and predicted outputs
-netPredict :: Network i hs o -> [[Double]] -> (Int, Int) -> [([Double], [Double], [Double])]
-netPredict neuralnet samples (inputD, outputD) = [ ( take inputD x, lastN outputD x, Numeric.LinearAlgebra.toList $ SA.extract $ (runNet neuralnet (SA.vector (take inputD x)))) | x <- samples ]
+netPredict :: (KnownNat i, KnownNat o) => Network i hs o -> [[Double]] -> (Int, Int) -> [([Double], [Double], [Double])]
+netPredict neuralnet samples (inputD, outputD) = [ ( take inputD x, lastN outputD x, SV.toList $ SV.rVec $ (runNet neuralnet (SA.vector (take inputD x)))) | x <- samples ]
 
 
 
 
 
-runNetFiltered :: Network i hs o -> [[Double]] -> (Int, Int) -> NetFilter -> [([Double], [Double], [Double])]
-runNetFiltered net samples (inputD, outputD) filterF = [ ( take inputD x, lastN outputD x, Numeric.LinearAlgebra.toList $ SA.extract $ nnFilter (runNet net ( SA.vector (take inputD x)))) | x <- samples ]
+runNetFiltered :: (KnownNat i, KnownNat o) => Network i hs o -> [[Double]] -> (Int, Int) -> NetFilter -> [([Double], [Double], [Double])]
+runNetFiltered net samples (inputD, outputD) filterF = [ ( take inputD x, lastN outputD x, SV.toList $ SV.rVec $ nnFilter (runNet net ( SA.vector (take inputD x)))) | x <- samples ]
 
                                                             where
 
@@ -414,9 +419,9 @@ main = do
     let dimensions = (inputD, outputD) :: (Int, Int)
 
     -- Exemplo que mostra que a rede nao esta segura contra formas incoerentes...
-    testNet <- randomNet (-1) Linear [(-2, Linear)] (-3)
+    testNet :: Network 2 '[2, 3] 1 <- randomNet [Logistic, Logistic, Logistic]
 
-    initialNet <- randomNet inputD (ELU 0.5) [(5, Linear )] outputD
+    initialNet :: Network 2 '[5] outputD <- randomNet [(ELU 0.5), Linear]
 
     putStrLn "\n\n\nImprimindo a rede inicial teste:\n"
     print initialNet
