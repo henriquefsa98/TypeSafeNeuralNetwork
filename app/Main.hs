@@ -1,22 +1,22 @@
 {-# LANGUAGE BangPatterns        #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE GADTs               #-}
-{-# LANGUAGE KindSignatures      #-}
+--{-# LANGUAGE KindSignatures      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE TemplateHaskell #-}
+--{-# LANGUAGE TemplateHaskell #-}
 {-# OPTIONS_GHC -Wno-missing-export-lists #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE StandaloneDeriving  #-}
+--{-# LANGUAGE StandaloneKindSignatures #-}
+--{-# LANGUAGE TypeApplications #-}
+--{-# LANGUAGE TypeFamilies #-}
+--{-# LANGUAGE StandaloneDeriving  #-}
 --{-# LANGUAGE AllowAmbiguousTypes #-}
 
 module Main where
@@ -26,7 +26,6 @@ module Main where
 import Control.Monad ()
 import Control.Monad.Random
 --import Data.Vector.Storable (basicLength)
-import Data.List ( foldl' )
 import GHC.Float ()
 import Data.Maybe
 --import Numeric.LinearAlgebra
@@ -34,25 +33,21 @@ import System.Environment
 import Text.Read
 import Data.Kind (Type)
 import GHC.Generics
-import Data.Binary
-import qualified Data.ByteString.Lazy as BSL
 
-import System.Random.Shuffle
-import GHC.TypeLits (Nat, KnownNat)
 import GHC.TypeLits.Singletons
 import Numeric.LinearAlgebra as NonStatic
-import Numeric.LinearAlgebra.Static
 
-import Numeric.LinearAlgebra.Static.Vector as StaticVector
 
-import qualified Data.Vector.Storable.Sized as SV
 import qualified Numeric.LinearAlgebra.Static as SA
 
 import Data.Singletons
 import Data.List.Singletons
-import Data.Singletons.TH as TH
-import Control.Exception (NestedAtomically(NestedAtomically))
-import qualified Numeric.LinearAlgebra.Static.Vector as SV
+import qualified Numeric.LinearAlgebra.Static.Vector as SA
+import Data.Binary
+import qualified Data.ByteString.Lazy as BSL
+import qualified GHC.Exts as SV
+import Data.List (foldl')
+import System.Random.Shuffle (shuffle')
 
 
 --import qualified Prelude as Numeric.LinearAlgebra
@@ -77,7 +72,7 @@ data Weights i o = W { wBiases  :: !(SA.R o)  -- n
 
 
 
-data Activation = Linear | Logistic | Tangent {-| ReLu | LeakyReLu | ELU Double-} deriving (Show, Generic)
+data Activation = Linear | Logistic | Tangent | ReLu {-| LeakyReLu | ELU Double-} deriving (Show, Generic)
 
 {-
 -- Define the promoted version of Activation
@@ -94,13 +89,14 @@ data SActivation :: Activation -> Type where
 -- $(TH.genSingletons [''Activation])
 
 
-getFunctions :: (Floating a) => Activation -> (a -> a, a -> a)
+--getFunctions :: (Floating a) => Activation -> (a -> a, a -> a)
 --getFunctions :: (KnownNat i) => Activation -> (SA.R i -> SA.R i, SA.R i -> SA.R i)
+getFunctions :: (KnownNat i) => Activation -> (SA.R i -> SA.R i, SA.R i -> SA.R i)
 getFunctions f = case f of
                   Linear      -> (linear, linear')
                   Logistic    -> (logistic, logistic')
                   Tangent     -> (tangent, tangent')
-                  --ReLu        -> (relu, relu')
+                  ReLu        -> (relu, relu')
                   --LeakyReLu   -> (lrelu, lrelu')
                   --ELU a       -> (elu a, elu' a)
 
@@ -115,16 +111,16 @@ data Network :: Nat -> [Nat] -> Nat -> Type where
 infixr 5 :&~
 
 
-{-
-instance (KnownNat i, KnownNat h, SingI (h ': hs), KnownNat o) => Show (Network i (h ': hs) o) where        -- Implementacao de instancia de show de Network para facilitar o debug
-  show :: (KnownNat i, KnownNat h, SingI (h ': hs), KnownNat o) => Network i (h ': hs) o -> String
+
+instance (KnownNat i, KnownNat o) => Show (Network i hs o) where        -- Implementacao de instancia de show de Network para facilitar o debug
+  show :: Network i hs o -> String
   show (O a f)          =  "Nos de saida: " ++ show (wNodes a) ++ ", Pesos: " ++ show (wBiases a) ++ ", Funcao de Ativacao: " ++ show f
   show ((:&~) a f b)  =  "Nos camada: "   ++ show (wNodes a) ++ ", Pesos: " ++ show (wBiases a) ++ ", Funcao de Ativacao: " ++ show f ++ "\n" ++ show b
 
--}
+
+
 
 {-
-
 -- Definicao de instancias para serializar a rede:
 
 instance (KnownNat i, KnownNat o) => Binary (Weights i o)
@@ -143,9 +139,10 @@ deserializeNetwork = decode
 
 -}
 
+
 -- Auxiliar definition of activation functions and it's derivatives
 
-linear :: Floating a => a -> a
+linear :: a -> a
 linear x = x
 
 linear' :: Floating a => a -> a
@@ -166,16 +163,16 @@ tangent x = (exp x - exp (-x)) / (exp x + exp (-x))
 tangent' :: Floating a => a -> a
 tangent' x = 1 + tangent x * tangent x
 
+
+relu ::  KnownNat i =>  SA.R i -> SA.R i
+--relu :: (Floating a) => a -> a
+relu x = SA.vecR $ (max 0) $ SA.rVec x
+
+relu' :: KnownNat i => SA.R i -> SA.R i
+--relu' :: (Floating a) => a -> a
+relu' x = SA.vecR $ max 0 $ SA.rVec x
+
 {-
---relu :: KnownNat i => SA.R i -> SA.R i
-relu :: (Floating a, Ord a) => a -> a
-relu x = (max 0) x
-
---relu' :: SA.R i -> SA.R i
-relu' :: (Floating a, Ord a) => a -> a
-relu' x = if x > 0 then 1 else 0
-
-
 --lrelu :: SA.R i -> SA.R i
 lrelu :: Floating a => a -> a
 lrelu y = max (0.01*y) y
@@ -223,11 +220,11 @@ getFilter f = case f of
 binaryOutput :: (KnownNat i) => SA.R i -> SA.R i
 binaryOutput x = SA.dvmap (\y -> if y > 0.5 then 1 else 0) x
 
-
-{-softmaxOut :: (KnownNat i) => SA.R i -> SA.R i
-softmaxOut x = SA.dvmap (/ total) SA.expm x
+{-
+softmaxOut :: (KnownNat i) => SA.R i -> SA.R i
+softmaxOut x = SA.dvmap (/ total) SA.extract x
               where
-                  total = sumElements $ SA.expm x
+                  total = sumElements $ SA.rVec x
 -}
 
 -- Definitions of functions to run the network itself
@@ -258,7 +255,7 @@ randomWeights = do
 
 
 getAct :: [Activation] -> Activation
-getAct (a:as) = a
+getAct (a:_) = a
 getAct []     = Linear
 
 
@@ -276,7 +273,7 @@ randomNet  hiddenActivations = go hiddenActivations sing
                         SNil           -> O     <$> randomWeights <*> pure (getAct actL)
                         SCons SNat ss  -> (:&~) <$> randomWeights <*> pure (getAct actL) <*> go (tail actL) ss
 
-{-
+
 -- Training function, train the network for just one iteration
 
 train :: forall i hs o. (KnownNat i, KnownNat o)
@@ -318,8 +315,8 @@ train rate x0 target = fst . go x0
               dEdy       = derivative y * dWs'
 
               -- new bias weights and node weights
-              wB'  = wB - SA.konst rate dEdy
-              wN'  = wN - SA.konst rate (SA.outer dEdy  x)
+              wB'  = wB - SA.konst rate * dEdy
+              wN'  = wN - SA.konst rate * (SA.outer dEdy  x)
               w'   = W wB' wN'
               -- bundle of derivatives for next step
               dWs  = tr wN SA.#> dEdy
@@ -334,7 +331,7 @@ lastN n xs = drop (length xs - n) xs
 
 
 -- atualizar para versao final de treino de rede: receber entradas E saidas, receber modelo inicial de rede construido fora da funcao de treino!
-netTrain :: (MonadRandom m, MonadIO m, KnownNat i, KnownNat o, SingI hs) =>  Network i hs o -> Double -> Int -> [[Double]] -> (Int, Int) -> m (Network i hs o, [([Double], [Double], [Double])], Network i hs o, [([Double], [Double], [Double])])
+netTrain :: (MonadRandom m, MonadIO m, KnownNat i, KnownNat o, SingI hs) =>  Network i hs o -> Double -> Int -> [[Double]] -> (Int, Int) -> m (Network i hs o, [(SA.R i, SA.R 0, SA.R o)], Network i hs o, [(SA.R i, SA.R o, SA.R o)])
 netTrain initnet learningrate nruns samples (inputD, outputD) = do
 
     let inps = map (SA.vector . take inputD) samples
@@ -355,16 +352,16 @@ netTrain initnet learningrate nruns samples (inputD, outputD) = do
                             zippedSamples = zip i o
                             shuffledSamples = unzip (shuffle' zippedSamples (length zippedSamples) gen)
 
-        outMatInit = [( take inputD x, lastN outputD x, SV.toList $ SV.rVec $ (runNet initnet (SA.vector (take inputD x))))
+        outMatInit = [( SA.vector $ take inputD x, SA.vector $ lastN outputD x, (runNet initnet (SA.vector (take inputD x))))
                        | x <- samples ]
 
-        outMat     = [ ( take inputD x, lastN outputD x, SV.toList $ SV.rVec $ (runNet trained (SA.vector (take inputD x))))
+        outMat     = [ ( SA.vector $ take inputD x, SA.vector $ lastN outputD x, (runNet trained (SA.vector (take inputD x))))
                        | x <- samples ]
 
 
     return (initnet, outMatInit, trained, outMat)
 
-
+{-
 
 -- Network prediction with full responde, inputs, expected and predicted outputs
 netPredict :: (KnownNat i, KnownNat o) => Network i hs o -> [[Double]] -> (Int, Int) -> [([Double], [Double], [Double])]
@@ -381,22 +378,24 @@ runNetFiltered net samples (inputD, outputD) filterF = [ ( take inputD x, lastN 
 
                                                               nnFilter = getFilter filterF
 
+-}
 
-
-renderOutput :: [([Double], [Double], [Double])] -> String
+renderOutput :: (KnownNat i, KnownNat o) => [(SA.R i, SA.R o, SA.R o)] -> String
 renderOutput samples = unlines $ map render samples
                           where
                             render (inputs, outputs, netResult) = "Inputs: " ++ show inputs ++ ", Expected Outputs: " ++ show outputs ++ ", Neural Network Results: " ++ show netResult
 
 
+
+{-
 -- definir funcao para checar precisao da rede
-checkAccuracy :: [([Double], [Double], [Double])] -> Double
-checkAccuracy xs = 100 * foldr checkAc 0 xs / fromIntegral(length xs)
+checkAccuracy :: (KnownNat i, KnownNat o) => [(SA.R i, SA.R o, SA.R o)] -> Double
+checkAccuracy xs = 100 * foldr checkAc 0 (SA.vector xs) / fromIntegral(length xs)
                       where
 
                         checkAc (_, expO, netO) acc = if expO == netO then acc + 1 else acc
-
 -}
+
 
 
 stringToSamples :: String -> [[Double]]
@@ -409,9 +408,9 @@ stringToSamples x = map (map readSamples . words) (lines x)
 
 main :: IO ()
 main = do
-    --args <- getArgs
-    --let n    = readMaybe =<< (args !!? 0)
-    --    rate = readMaybe =<< (args !!? 1)
+    args <- getArgs
+    let n    :: Maybe Int    = readMaybe =<< (args !!? 0)
+        rate :: Maybe Double = readMaybe =<< (args !!? 1)
     samplesFile <- readFile "/home/kali/Downloads/UFABC/PGC/Github/TypeSafeNeuralNetwork/inputs/inputs30K.txt"
 
     -- Read input file to get all samples to train the neural network!
@@ -422,40 +421,48 @@ main = do
     let outputD = 1 :: Int
     let dimensions = (inputD, outputD) :: (Int, Int)
 
+    print (n, rate, inputD, outputD, dimensions)
+
     -- Exemplo que mostra que a rede nao esta segura contra formas incoerentes...
     testNet :: Network 2 '[2, 3] 1 <- randomNet [Logistic, Logistic, Logistic]
 
     initialNet :: Network 2 '[5] 1 <- randomNet [(Logistic), Linear]
 
-    putStrLn "\n\n\nImprimindo a rede inicial teste:\n"
+    --putStrLn "\n\n\nImprimindo a rede inicial teste:\n"
     --print initialNet
 
+    putStrLn "Imprimindo testNet e initialNet:\n\n"
+    putStrLn "testNet:\n"
+    print testNet
+    putStrLn "\n\ninitialNet:\n"
+    print initialNet
 
     putStrLn "\n\nTraining network..."
 
-    --(_, _, netTrained, outputS) <- netTrain initialNet
-    --                             (fromMaybe 0.00025   rate)  -- init v 0.0025
-    --                             (fromMaybe 1000 n   )   -- init value 150 log log 
-    --                             (take 20000 samples)
-    --                             dimensions
+    (_, _, netTrained, outputS) <- netTrain initialNet
+                                  (fromMaybe 0.0025   rate)  -- init v 0.0025
+                                  (fromMaybe 100 n   )   -- init value 150 log log 
+                                  (take 10 samples)
+                                   dimensions
 
-
+    putStrLn "\n\nRede atualizada apos treino: \n\n"
+    print netTrained
 
     putStrLn "\n\n\nImprimindo predicao agora treinada:\n"
     --putStrLn $ "\nAcuracia: " ++ show (checkAccuracy outputS) ++ " %"
-    --putStrLn $ renderOutput outputS
-    putStrLn "\n\n\nImprimindo predicao treinada, agora com filtro de saida da rede:\n"
+    putStrLn $ renderOutput outputS
+    --putStrLn "\n\n\nImprimindo predicao treinada, agora com filtro de saida da rede:\n"
     --let filteredResults = runNetFiltered netTrained (take 20000 samples) dimensions BinaryOutput
     --putStrLn $ "\nAcuracia: " ++ show (checkAccuracy filteredResults) ++ " %"
     --putStrLn $ renderOutput filteredResults
 
 
-    putStrLn "\n\n\nVerificando agora a performance em samples que nao foram usadas no treino:"
+    --putStrLn "\n\n\nVerificando agora a performance em samples que nao foram usadas no treino:"
     --let filteredResultsFinal = runNetFiltered netTrained (drop 20000 samples) dimensions BinaryOutput
     --putStrLn $ "\nAcuracia: " ++ show (checkAccuracy filteredResultsFinal) ++ " %"
     --putStrLn $ renderOutput filteredResultsFinal
 
-    putStrLn "\n\n\nAgora imprimindo a rede final:\n"
+    --putStrLn "\n\n\nAgora imprimindo a rede final:\n"
     --print netTrained
 
 
