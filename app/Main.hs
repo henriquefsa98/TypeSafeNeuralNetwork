@@ -1,34 +1,28 @@
 {-# LANGUAGE BangPatterns        #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE GADTs               #-}
---{-# LANGUAGE KindSignatures      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleInstances #-}
---{-# LANGUAGE TemplateHaskell #-}
 {-# OPTIONS_GHC -Wno-missing-export-lists #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE PolyKinds #-}
---{-# LANGUAGE StandaloneKindSignatures #-}
---{-# LANGUAGE TypeApplications #-}
---{-# LANGUAGE TypeFamilies #-}
---{-# LANGUAGE StandaloneDeriving  #-}
---{-# LANGUAGE AllowAmbiguousTypes #-}
+
 
 module Main where
 
---import Lib
+
 
 import Control.Monad ()
 import Control.Monad.Random
---import Data.Vector.Storable (basicLength)
+
 import GHC.Float ()
 import Data.Maybe
---import Numeric.LinearAlgebra
+
 import System.Environment
 import Text.Read
 import Data.Kind (Type)
@@ -43,71 +37,46 @@ import qualified Numeric.LinearAlgebra.Static as SA
 import Data.Singletons
 import Data.List.Singletons
 import qualified Numeric.LinearAlgebra.Static.Vector as SA
-import Data.Vector.Storable.Sized as VecSized (toList, fromList) -- Usar isso para converter SA.rVec para listas!
+import Data.Vector.Storable.Sized as VecSized (toList, map, foldr)
 import Data.Binary as BinLib
 import qualified Data.ByteString.Lazy as BSL
-import qualified GHC.Exts as SV
 import Data.List (foldl')
 import System.Random.Shuffle (shuffle')
 
 
---import qualified Prelude as Numeric.LinearAlgebra
-
--- Using hmatrix minimization methods
---import Numeric.GSL.Minimization
-
---data family Sing (x :: k)
-
-{-
-data SList xs where
-  SNil  :: SList '[]
-  SCons :: Sing x -> SList xs -> SList (x ': xs)
--}
 
 
+-- Definition of Weights, a representation of a Layer of Neurons in the Neural Network
 
-data Weights i o = W { wBiases  :: !(SA.R o)  -- n
-                        , wNodes  :: !(SA.L o i)  -- n x m
-                      }                              -- "m to n" layer
+data Weights i o = W { wBiases  :: !(SA.R o)
+                     , wNodes   :: !(SA.L o i)
+                      }
                   deriving (Show, Generic)
 
 
 instance (KnownNat i, KnownNat o) => Eq (Weights i o) where
   (==) :: Weights i o -> Weights i o -> Bool
-  (==) (W b n) (W b2 n2) = and [(SA.rVec b == SA.rVec b2),  (SA.lVec n == SA.lVec n2)]
+  (==) (W b n) (W b2 n2) = (SA.rVec b == SA.rVec b2) && (SA.lVec n == SA.lVec n2)
 
 instance (KnownNat i, KnownNat o) => Binary (Weights i o)
 
 
-data Activation = Linear | Logistic | Tangent | ReLu {-| LeakyReLu | ELU Double-} deriving (Show, Generic, Eq)
+-- Definition of Data Activation, to be able to insert activation functions within which layer of the Network
+
+data Activation = Linear | Logistic | Tangent | ReLu | LeakyReLu | ELU Double deriving (Show, Generic, Eq)
 
 instance Binary Activation
 
-{-
--- Define the promoted version of Activation
-data SActivation :: Activation -> Type where
-  SLinear :: SActivation 'Linear
-  SLogistic :: SActivation 'Logistic
-  STangent :: SActivation 'Tangent
-  SReLu :: SActivation 'ReLu
-  SLeakyReLu :: SActivation 'LeakyReLu
-  SELU :: Double -> SActivation ('ELU a)
--}
 
--- Generate the singleton instances for Activation
--- $(TH.genSingletons [''Activation])
-
-
---getFunctions :: (Floating a) => Activation -> (a -> a, a -> a)
---getFunctions :: (KnownNat i) => Activation -> (SA.R i -> SA.R i, SA.R i -> SA.R i)
+-- Auxiliar function to get Activation function and it's derivative, pattern-matching with Activation constructors
 getFunctions :: (KnownNat i) => Activation -> (SA.R i -> SA.R i, SA.R i -> SA.R i)
 getFunctions f = case f of
                   Linear      -> (linear, linear')
                   Logistic    -> (logistic, logistic')
                   Tangent     -> (tangent, tangent')
                   ReLu        -> (relu, relu')
-                  --LeakyReLu   -> (lrelu, lrelu')
-                  --ELU a       -> (elu a, elu' a)
+                  LeakyReLu   -> (lrelu, lrelu')
+                  ELU a       -> (elu a, elu' a)
 
 
 data Network :: Nat -> [Nat] -> Nat -> Type where
@@ -116,48 +85,25 @@ data Network :: Nat -> [Nat] -> Nat -> Type where
     (:&~) :: (KnownNat h) => Weights i h -> Activation
           -> !(Network h hs o)
           -> Network i (h ': hs)  o
-                                    --deriving (Generic)
+
 infixr 5 :&~
 
 
-
-instance (KnownNat i, KnownNat o) => Show (Network i hs o) where        -- Implementacao de instancia de show de Network para facilitar o debug
+-- Show instance definition to visualize the Network
+instance (KnownNat i, KnownNat o) => Show (Network i hs o) where
   show :: Network i hs o -> String
-  show (O a f)          =  "Nos de saida: " ++ show (wNodes a) ++ ", Pesos: " ++ show (wBiases a) ++ ", Funcao de Ativacao: " ++ show f
-  show ((:&~) a f b)  =  "Nos camada: "   ++ show (wNodes a) ++ ", Pesos: " ++ show (wBiases a) ++ ", Funcao de Ativacao: " ++ show f ++ "\n" ++ show b
+  show (O a f)          =  "Output neurons: "        ++ show (wNodes a) ++ ", Weights: " ++ show (wBiases a) ++ ", Activation Function: " ++ show f
+  show ((:&~) a f b)    =  "Input/Layer neurons: "   ++ show (wNodes a) ++ ", Weights: " ++ show (wBiases a) ++ ", Activation Function: " ++ show f ++ "\n" ++ show b
 
 
 instance (KnownNat i, KnownNat o) => Eq (Network i hs o) where
-  (==) (O w f)       (O w2 f2)        = (w == w2) && (f == f2)
-  (==) ((:&~) w f n) ((:&~) w2 f2 n2) = (w == w2) && (f == f2) && (n == n2)
-  (==) _ _ = False
-
-
-
--- Definicao de instancias para serializar a rede:
-
-{-
-
-
-randomNet :: forall m i hs o. (MonadRandom m, KnownNat i, SingI hs, KnownNat o)
-          => [Activation]
-          -> m (Network i hs o)
-randomNet  hiddenActivations = go hiddenActivations sing 
-  where
-    go :: forall h  hs'. (KnownNat h)
-       => [Activation] 
-       ->  Sing hs'
-       -> m (Network h  hs' o)
-
-    go actL sizes  = case sizes of
-                        SNil           -> O     <$> randomWeights <*> pure (getAct actL)
-                        SCons SNat ss  -> (:&~) <$> randomWeights <*> pure (getAct actL) <*> go (tail actL) ss
+  (==) (O w f)       (O w2 f2)        = w == w2 && f == f2
+  (==) ((:&~) w f n) ((:&~) w2 f2 n2) = w == w2 && f == f2 && n == n2
 
 
 
 
--}
-
+-- Definition of instance to serialize a Network and the put/get functions:
 
 
 putNet :: (KnownNat i, KnownNat o)
@@ -188,35 +134,40 @@ instance (KnownNat i, SingI hs, KnownNat o) => Binary (Network i hs o) where
 
 
 
--- Definicao de funcoes para serializar e desserializar a rede
+-- Functions definitions to serialize and desserialize the Network
 
--- Serializa um modelo de Rede para uma ByteString
+-- Serialize a Network to a ByteString
 serializeNetwork :: (KnownNat i, SingI hs, KnownNat o) => Network i hs o -> BSL.ByteString
 serializeNetwork = encode
 
--- Desserializa um modelo de Rede a partir de uma ByteString
+-- Deserialize a Network from a ByteString
 deserializeNetwork :: (KnownNat i, SingI hs, KnownNat o) => BSL.ByteString -> Network i hs o
 deserializeNetwork = decode
 
 
 
--- Auxiliar definition of activation functions and it's derivatives
+-- Auxiliar definitions of activation functions and it's derivatives
 
-linear :: a -> a
+-- Linear activation and its derivative 
+linear :: SA.R i -> SA.R i
 linear x = x
 
-linear' :: Floating a => a -> a
-linear' _ =  1
+linear' :: KnownNat i => SA.R i -> SA.R i
+linear' x =  SA.vecR $ VecSized.map (const 1) $ SA.rVec x
 
-logistic :: Floating a => a -> a
-logistic x = 1 / (1 + exp (-x))
 
-logistic' :: Floating a => a -> a
+-- Logistic activation and its derivative 
+logistic :: KnownNat i => SA.R i -> SA.R i
+logistic x = SA.vecR $ VecSized.map (\y -> 1 / (1 + exp (-y))) $ SA.rVec x
+
+logistic' :: KnownNat i => SA.R i -> SA.R i
 logistic' x = logix * (1 - logix)
   where
     logix = logistic x
 
 
+
+-- Tangent activation and its derivative 
 tangent :: Floating a => a -> a
 tangent x = (exp x - exp (-x)) / (exp x + exp (-x))
 
@@ -224,46 +175,37 @@ tangent' :: Floating a => a -> a
 tangent' x = 1 + tangent x * tangent x
 
 
+-- ReLu activation and its derivative 
 relu ::  KnownNat i =>  SA.R i -> SA.R i
---relu :: (Floating a) => a -> a
-relu x = SA.vecR $ (max 0) $ SA.rVec x
+relu x = SA.vecR $ VecSized.map (max 0) $ SA.rVec x
+
 
 relu' :: KnownNat i => SA.R i -> SA.R i
---relu' :: (Floating a) => a -> a
-relu' x = SA.vecR $ max 0 $ SA.rVec x
-
-{-
---lrelu :: SA.R i -> SA.R i
-lrelu :: Floating a => a -> a
-lrelu y = max (0.01*y) y
-
-lrelu' :: SA.R i -> SA.R i
-lrelu' y = if y > 0 then 1 else 0.01
+relu' x = SA.vecR $ VecSized.map (\y -> if y > 0 then 1 else 0) $ SA.rVec x
 
 
---elu :: Double -> SA.R i -> SA.R i
---elu :: Floating a => a -> a -> a
---elu a  = (\y -> if y >= 0 then y else a * (exp y - 1))
+-- Leaky ReLu activation and its derivative 
+lrelu :: KnownNat i => SA.R i -> SA.R i
+lrelu y = SA.vecR $ VecSized.map (\x -> max x (0.01*x)) $ SA.rVec y
 
-elu :: (KnownNat n) => Double -> SA.R n -> SA.R n
-elu a y = StaticVector.vecR $ cmap (\x -> if x >= 0 then x else a * (exp x - 1)) $ StaticVector.rVec y
+lrelu' :: KnownNat i => SA.R i -> SA.R i
+lrelu' y = SA.vecR $ VecSized.map (\x -> if x > 0 then 1 else 0.01) $ SA.rVec y
 
 
---elu' :: Double -> SA.R i -> SA.R i
+
+-- ELU activation and its derivative 
+elu :: (KnownNat i) => Double -> SA.R i -> SA.R i
+elu a y = SA.vecR $ VecSized.map (\x -> if x >= 0 then x else a * (exp x - 1)) $ SA.rVec  y
+
+
 elu' :: (KnownNat n) => Double -> SA.R n -> SA.R n
-elu' a y = StaticVector.vecR $ cmap (\x -> if x >= 0 then 1 else a + a * (exp x - 1)) $ StaticVector.rVec y
+elu' a y = SA.vecR $ VecSized.map (\x -> if x >= 0 then 1 else a + a * (exp x - 1)) $ SA.rVec y
 
 
 
--}
 
 
--- Auxiliar way to define a derivative of a function, using limits (can be very unprecise)
-derive :: (Fractional a) => a -> (a -> a) -> (a -> a)
-derive h f x = (f (x+h) - f x) / h
-
-
--- Definiton of NetFilters to output of the neural network
+-- Definiton of NetFilter, cllass of filters to the output of the neural network
 
 data NetFilter = BinaryOutput {-| SoftMax-} deriving Show
 
@@ -275,24 +217,30 @@ getFilter f = case f of
                 --SoftMax        ->   softmaxOut
 
 
--- Auxiliar definitions to  Filters
+-- Auxiliar definitions to  Filters, implementation of the filters themselves
 
+
+-- Filter that makes the Network only output 0 or 1, a binary output
 binaryOutput :: (KnownNat i) => SA.R i -> SA.R i
-binaryOutput x = SA.dvmap (\y -> if y > 0.5 then 1 else 0) x
+binaryOutput = SA.dvmap (\y -> if y > 0.5 then 1 else 0)
 
-{-
+
+-- Filter that makes the Network output a probability distribution, good for classifications
 softmaxOut :: (KnownNat i) => SA.R i -> SA.R i
-softmaxOut x = SA.dvmap (/ total) SA.extract x
+softmaxOut x = SA.vecR $ VecSized.map (/ total) $ SA.rVec x
               where
-                  total = sumElements $ SA.rVec x
--}
+                  total =  VecSized.foldr (+) 0 $ VecSized.map exp $ SA.rVec x
+
+
 
 -- Definitions of functions to run the network itself
 
+
+-- Function to run a layer (Weights) of the Network
 runLayer :: (KnownNat i, KnownNat o) => Weights i o -> SA.R i -> SA.R o
 runLayer (W wB wN) v = wB + (wN SA.#> v)
 
-
+-- Function to run a Network
 runNet :: (KnownNat i, KnownNat o) => Network i hs o -> SA.R i -> SA.R o
 runNet = \case
    O w f -> \(!v)  ->          let (function, _) = getFunctions f
@@ -303,8 +251,12 @@ runNet = \case
                                   v' = function (runLayer w v)
                                 in  runNet n' v'
 
+
+
 -- Definitions of functions to generate a random network
 
+
+-- Generate randoms Weights
 randomWeights :: (MonadRandom m, KnownNat i, KnownNat o) => m (Weights i o)
 randomWeights = do
     seed1 :: Int <- getRandom
@@ -314,11 +266,14 @@ randomWeights = do
     return $ W wB wN
 
 
+-- Auxiliar function to get a Activation from the [Activation], safetly returning Linear activations for empty lists
 getAct :: [Activation] -> Activation
-getAct (a:_) = a
+getAct (a:_)  = a
 getAct []     = Linear
 
 
+
+-- Generate a Network with random Weights, based on input, hidden layers and output types, and a list of Activations
 randomNet :: forall m i hs o. (MonadRandom m, KnownNat i, SingI hs, KnownNat o)
           => [Activation]
           -> m (Network i hs o)
@@ -334,13 +289,15 @@ randomNet  hiddenActivations = go hiddenActivations sing
                         SCons SNat ss  -> (:&~) <$> randomWeights <*> pure (getAct actL) <*> go (tail actL) ss
 
 
--- Training function, train the network for just one iteration
+
+
+-- Training function, train the network for just one iteration on one sample
 
 train :: forall i hs o. (KnownNat i, KnownNat o)
       => Double           -- ^ learning rate
-      -> SA.R i    -- ^ input vector
-      -> SA.R o    -- ^ target vector
-      -> Network i hs o          -- ^ network to train
+      -> SA.R i           -- ^ input vector
+      -> SA.R o           -- ^ target vector
+      -> Network i hs o   -- ^ network to train
       -> Network i hs o
 train rate x0 target = fst . go x0
   where
@@ -358,7 +315,7 @@ train rate x0 target = fst . go x0
 
               -- new bias weights and node weights
               wB'  = wB - SA.konst rate * dEdy
-              wN'  = wN - SA.konst rate * (SA.outer dEdy x)
+              wN'  = wN - SA.konst rate * SA.outer dEdy x
               w'   = W wB' wN'
               -- bundle of derivatives for next step
               dWs  = tr wN SA.#> dEdy
@@ -376,7 +333,7 @@ train rate x0 target = fst . go x0
 
               -- new bias weights and node weights
               wB'  = wB - SA.konst rate * dEdy
-              wN'  = wN - SA.konst rate * (SA.outer dEdy  x)
+              wN'  = wN - SA.konst rate * SA.outer dEdy  x
               w'   = W wB' wN'
               -- bundle of derivatives for next step
               dWs  = tr wN SA.#> dEdy
@@ -390,12 +347,12 @@ lastN :: Int -> [a] -> [a]
 lastN n xs = drop (length xs - n) xs
 
 
--- atualizar para versao final de treino de rede: receber entradas E saidas, receber modelo inicial de rede construido fora da funcao de treino!
+-- Function to train the Network, based on a learning rate, number of iterations, a list of samples and the samples dimensions
 netTrain :: (MonadRandom m, MonadIO m, KnownNat i, KnownNat o, SingI hs) =>  Network i hs o -> Double -> Int -> [[Double]] -> (Int, Int) -> m (Network i hs o, [(SA.R i, SA.R 0, SA.R o)], Network i hs o, [(SA.R i, SA.R o, SA.R o)])
 netTrain initnet learningrate nruns samples (inputD, outputD) = do
 
-    let inps = map (SA.vector . take inputD) samples
-    let outs = map (SA.vector . lastN outputD) samples
+    let inps = Prelude.map (SA.vector . take inputD) samples
+    let outs = Prelude.map (SA.vector . lastN outputD) samples
 
     gen <- newStdGen
 
@@ -406,16 +363,16 @@ netTrain initnet learningrate nruns samples (inputD, outputD) = do
                 | n2 <= 0 = net
                 | otherwise = trainNTimes (foldl' trainEach net (zip i o)) shuffledSamples (n2 - 1)  -- Shuffle the samples at every iteration of training
                         where
-                            trainEach :: (KnownNat i, SingI hs, KnownNat o) => Network i hs o -> (SA.R i, SA.R o) -> Network i hs o
+                            trainEach :: (KnownNat i, KnownNat o) => Network i hs o -> (SA.R i, SA.R o) -> Network i hs o
                             trainEach nt (i2, o2) = train learningrate i2 o2 nt
 
                             zippedSamples = zip i o
                             shuffledSamples = unzip (shuffle' zippedSamples (length zippedSamples) gen)
 
-        outMatInit = [( SA.vector $ take inputD x, SA.vector $ lastN outputD x, (runNet initnet (SA.vector (take inputD x))))
+        outMatInit = [( SA.vector $ take inputD x, SA.vector $ lastN outputD x, runNet initnet (SA.vector (take inputD x)))
                        | x <- samples ]
 
-        outMat     = [ ( SA.vector $ take inputD x, SA.vector $ lastN outputD x, (runNet trained (SA.vector (take inputD x))))
+        outMat     = [ ( SA.vector $ take inputD x, SA.vector $ lastN outputD x, runNet trained (SA.vector (take inputD x)))
                        | x <- samples ]
 
 
@@ -423,14 +380,14 @@ netTrain initnet learningrate nruns samples (inputD, outputD) = do
 
 
 
--- Network prediction with full responde, inputs, expected and predicted outputs
+-- Network prediction with full response, inputs, expected and predicted outputs
 netPredict :: (KnownNat i, KnownNat o) => Network i hs o -> [[Double]] -> (Int, Int) -> [(SA.R i, SA.R o, SA.R o)]
-netPredict neuralnet samples (inputD, outputD) = [ ( SA.vector $ take inputD x, SA.vector $ lastN outputD x, (runNet neuralnet (SA.vector (take inputD x)))) | x <- samples ]
+netPredict neuralnet samples (inputD, outputD) = [ ( SA.vector $ take inputD x, SA.vector $ lastN outputD x, runNet neuralnet (SA.vector (take inputD x))) | x <- samples ]
 
 
 
 
-
+-- Function to run the Network over a list of Samples, and applaying a NetFilter
 runNetFiltered :: (KnownNat i, KnownNat o) => Network i hs o -> [[Double]] -> (Int, Int) -> NetFilter -> [(SA.R i, SA.R o, SA.R o)]
 runNetFiltered net samples (inputD, outputD) filterF = [ ( SA.vector $ take inputD x, SA.vector $ lastN outputD x, nnFilter (runNet net ( SA.vector (take inputD x)))) | x <- samples ]
 
@@ -440,32 +397,33 @@ runNetFiltered net samples (inputD, outputD) filterF = [ ( SA.vector $ take inpu
 
 
 
+-- Function to Output a list of responses from a Network
 renderOutput :: (KnownNat i, KnownNat o) => [(SA.R i, SA.R o, SA.R o)] -> String
-renderOutput samples = unlines $ map render samples
+renderOutput samples = unlines $ Prelude.map render samples
                           where
                             render (inputs, outputs, netResult) = "Inputs: " ++ show inputs ++ ", Expected Outputs: " ++ show outputs ++ ", Neural Network Results: " ++ show netResult
 
 
 
 
--- definir funcao para checar precisao da rede
+-- Function to check the Network accuracy based on a list of samples and the expected outputs and the Network predictions
 checkAccuracy :: (KnownNat o) =>[(SA.R i, SA.R o, SA.R o)] -> Double
-checkAccuracy xs = 100 * foldr checkAc 0 xs / fromIntegral(length xs)
+checkAccuracy xs = 100 * Prelude.foldr checkAc 0 xs / fromIntegral(length xs)
                       where
 
                         checkAc (_, expO, netO) acc = if VecSized.toList (SA.rVec expO) == VecSized.toList (SA.rVec netO) then acc + 1 else acc
 
 
 
-
+-- Auxiliar function to read samples from a String
 stringToSamples :: String -> [[Double]]
-stringToSamples x = map (map readSamples . words) (lines x)
+stringToSamples x = Prelude.map (Prelude.map readSamples . words) (lines x)
                       where
                         readSamples y = read y :: Double
 
 
 compareNets :: (Eq a) => a -> a -> Bool
-compareNets a b = if a == b then True else False
+compareNets a b = a == b
 
 
 
@@ -486,64 +444,51 @@ main = do
 
     print (n, rate, inputD, outputD, dimensions)
 
-    -- Exemplo que mostra que a rede nao esta segura contra formas incoerentes...
-    testNet :: Network 2 '[2, 3] 1 <- randomNet [Logistic, Logistic, Logistic]
 
-    initialNet :: Network 2 '[5] 1 <- randomNet [(Logistic), Linear]
+    initialNet  :: Network 2 '[5] 1    <- randomNet [Logistic, Linear]
 
-    initialNet2 :: Network 2 '[5] 1 <- randomNet [(Logistic), Linear]
+    initialNet2 :: Network 2 '[5] 1    <- randomNet [Logistic, Linear]
 
-    putStrLn $ "initialNet e initialNet2 sao iguais? R: " ++ show ( initialNet == initialNet2)
-    putStrLn $ "initialNet e initialNet sao iguais? R: " ++ show ( initialNet == initialNet) 
+    putStrLn $ "initialNet e initialNet2 Eq check? R: " ++ show ( initialNet == initialNet2)
+    putStrLn $ "initialNet e initialNet Eq check? R: "  ++ show ( initialNet == initialNet)
 
-    --putStrLn "\n\n\nImprimindo a rede inicial teste:\n"
-    --print initialNet
+ 
 
-    putStrLn "Imprimindo testNet e initialNet:\n\n"
-    putStrLn "testNet:\n"
-    print testNet
+    putStrLn "Showing initial Network, before training:\n\n"
     putStrLn "\n\ninitialNet:\n"
     print initialNet
 
     putStrLn "\n\nTraining network..."
 
     (_, _, netTrained, outputS) <- netTrain initialNet
-                                  (fromMaybe 0.00025   rate)  -- init v 0.0025
+                                  (fromMaybe 0.0025   rate)  -- init v 0.0025
                                   (fromMaybe 1000 n   )   -- init value 150 log log 
                                   (take 100 samples)
                                    dimensions
 
-    putStrLn $ "initialNet e netTrained sao iguais? R: " ++ show ( initialNet == netTrained) 
+    putStrLn $ "Are initialNet e netTrained equals? R: " ++ show ( initialNet == netTrained)
 
-    putStrLn "\n\nRede atualizada apos treino: \n\n"
+    putStrLn "\n\nNetwork after training: \n\n"
     print netTrained
 
-    putStrLn "\n\n\nImprimindo predicao agora treinada:\n"
-    putStrLn $ "\nAcuracia: " ++ show (checkAccuracy outputS) ++ " %"
+    putStrLn "\n\n\nShowing network prediction of:\n"
+    putStrLn $ "\n-------> Accuracy: " ++ show (checkAccuracy outputS) ++ " % <------"
     putStrLn $ renderOutput outputS
-    putStrLn "\n\n\nImprimindo predicao treinada, agora com filtro de saida da rede:\n"
+    putStrLn "\n\n\nShowing network filtered prediction, with BinaryOutput NetFilter applied:\n"
     let filteredResults = runNetFiltered netTrained (take 200 samples) dimensions BinaryOutput
-    putStrLn $ "\nAcuracia: " ++ show (checkAccuracy filteredResults) ++ " %"
+    putStrLn $ "\n-------> Accuracy: " ++ show (checkAccuracy filteredResults) ++ " % <------"
     putStrLn $ renderOutput filteredResults
 
 
-    --putStrLn "\n\n\nVerificando agora a performance em samples que nao foram usadas no treino:"
-    --let filteredResultsFinal = runNetFiltered netTrained (drop 20000 samples) dimensions BinaryOutput
-    --putStrLn $ "\nAcuracia: " ++ show (checkAccuracy filteredResultsFinal) ++ " %"
-    --putStrLn $ renderOutput filteredResultsFinal
 
-    --putStrLn "\n\n\nAgora imprimindo a rede final:\n"
-    --print netTrained
-
-
-    putStrLn "\n\nSalvando rede treinada em arquivo: redetreinada.tsnn...."
-    BSL.writeFile "redetreinada.tsnn" $ encode netTrained
-    putStrLn "\nCarregando rede treianda do arquivo e exibindo:"
-    byteStringNet <- BSL.readFile "redetreinada.tsnn"
-    let fileTrainedNet :: Network 2 '[5] 1 = deserializeNetwork byteStringNet  --Necessario saber de antemao o tipo da Network.... 
+    putStrLn "\n\nWriting the trained Network in the file: trainedNet.tsnn ...."
+    BSL.writeFile "trainedNet.tsnn" $ encode netTrained
+    putStrLn "\nLoading the Network from file trainedNet.tsnn, printing it:"
+    byteStringNet <- BSL.readFile "trainedNet.tsnn"
+    let fileTrainedNet :: Network 2 '[5] 1 = deserializeNetwork byteStringNet
     print fileTrainedNet
-    putStrLn $ "netTrained e fileTrainedNet sao iguais? R: " ++ show ( netTrained == fileTrainedNet) 
-    putStrLn "\nRede salva com sucesso, encerrando a execucao!"
+    putStrLn $ "Are netTrained and fileTrainedNet equals? R: " ++ show ( netTrained == fileTrainedNet)
+    putStrLn "\nNetwork succesfuly saved, shuting down the execution!"
 
 (!!?) :: [a] -> Int -> Maybe a
 xs !!? i = listToMaybe (drop i xs)
