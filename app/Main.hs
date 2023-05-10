@@ -43,9 +43,10 @@ import qualified Numeric.LinearAlgebra.Static as SA
 import Data.Singletons
 import Data.List.Singletons
 import qualified Numeric.LinearAlgebra.Static.Vector as SA
+import Data.Vector.Storable.Sized as VecSized (toList, fromList) -- Usar isso para converter SA.rVec para listas!
 import Data.Binary
 import qualified Data.ByteString.Lazy as BSL
-import qualified GHC.Exts as SV
+import qualified GHC.Exts as SV 
 import Data.List (foldl')
 import System.Random.Shuffle (shuffle')
 
@@ -361,24 +362,24 @@ netTrain initnet learningrate nruns samples (inputD, outputD) = do
 
     return (initnet, outMatInit, trained, outMat)
 
-{-
+
 
 -- Network prediction with full responde, inputs, expected and predicted outputs
-netPredict :: (KnownNat i, KnownNat o) => Network i hs o -> [[Double]] -> (Int, Int) -> [([Double], [Double], [Double])]
-netPredict neuralnet samples (inputD, outputD) = [ ( take inputD x, lastN outputD x, SV.toList $ SV.rVec $ (runNet neuralnet (SA.vector (take inputD x)))) | x <- samples ]
+netPredict :: (KnownNat i, KnownNat o) => Network i hs o -> [[Double]] -> (Int, Int) -> [(SA.R i, SA.R o, SA.R o)]
+netPredict neuralnet samples (inputD, outputD) = [ ( SA.vector $ take inputD x, SA.vector $ lastN outputD x, (runNet neuralnet (SA.vector (take inputD x)))) | x <- samples ]
 
 
 
 
 
-runNetFiltered :: (KnownNat i, KnownNat o) => Network i hs o -> [[Double]] -> (Int, Int) -> NetFilter -> [([Double], [Double], [Double])]
-runNetFiltered net samples (inputD, outputD) filterF = [ ( take inputD x, lastN outputD x, SV.toList $ SV.rVec $ nnFilter (runNet net ( SA.vector (take inputD x)))) | x <- samples ]
+runNetFiltered :: (KnownNat i, KnownNat o) => Network i hs o -> [[Double]] -> (Int, Int) -> NetFilter -> [(SA.R i, SA.R o, SA.R o)]
+runNetFiltered net samples (inputD, outputD) filterF = [ ( SA.vector $ take inputD x, SA.vector $ lastN outputD x, nnFilter (runNet net ( SA.vector (take inputD x)))) | x <- samples ]
 
                                                             where
 
                                                               nnFilter = getFilter filterF
 
--}
+
 
 renderOutput :: (KnownNat i, KnownNat o) => [(SA.R i, SA.R o, SA.R o)] -> String
 renderOutput samples = unlines $ map render samples
@@ -387,14 +388,14 @@ renderOutput samples = unlines $ map render samples
 
 
 
-{-
+
 -- definir funcao para checar precisao da rede
-checkAccuracy :: (KnownNat i, KnownNat o) => [(SA.R i, SA.R o, SA.R o)] -> Double
-checkAccuracy xs = 100 * foldr checkAc 0 (SA.vector xs) / fromIntegral(length xs)
+checkAccuracy :: (KnownNat o) =>[(SA.R i, SA.R o, SA.R o)] -> Double
+checkAccuracy xs = 100 * foldr checkAc 0 xs / fromIntegral(length xs)
                       where
 
-                        checkAc (_, expO, netO) acc = if expO == netO then acc + 1 else acc
--}
+                        checkAc (_, expO, netO) acc = if VecSized.toList (SA.rVec expO) == VecSized.toList (SA.rVec netO) then acc + 1 else acc
+
 
 
 
@@ -440,21 +441,21 @@ main = do
     putStrLn "\n\nTraining network..."
 
     (_, _, netTrained, outputS) <- netTrain initialNet
-                                  (fromMaybe 0.0025   rate)  -- init v 0.0025
-                                  (fromMaybe 100 n   )   -- init value 150 log log 
-                                  (take 10 samples)
+                                  (fromMaybe 0.00025   rate)  -- init v 0.0025
+                                  (fromMaybe 1000 n   )   -- init value 150 log log 
+                                  (take 100 samples)
                                    dimensions
 
     putStrLn "\n\nRede atualizada apos treino: \n\n"
     print netTrained
 
     putStrLn "\n\n\nImprimindo predicao agora treinada:\n"
-    --putStrLn $ "\nAcuracia: " ++ show (checkAccuracy outputS) ++ " %"
+    putStrLn $ "\nAcuracia: " ++ show (checkAccuracy outputS) ++ " %"
     putStrLn $ renderOutput outputS
-    --putStrLn "\n\n\nImprimindo predicao treinada, agora com filtro de saida da rede:\n"
-    --let filteredResults = runNetFiltered netTrained (take 20000 samples) dimensions BinaryOutput
-    --putStrLn $ "\nAcuracia: " ++ show (checkAccuracy filteredResults) ++ " %"
-    --putStrLn $ renderOutput filteredResults
+    putStrLn "\n\n\nImprimindo predicao treinada, agora com filtro de saida da rede:\n"
+    let filteredResults = runNetFiltered netTrained (take 200 samples) dimensions BinaryOutput
+    putStrLn $ "\nAcuracia: " ++ show (checkAccuracy filteredResults) ++ " %"
+    putStrLn $ renderOutput filteredResults
 
 
     --putStrLn "\n\n\nVerificando agora a performance em samples que nao foram usadas no treino:"
