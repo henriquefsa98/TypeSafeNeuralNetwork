@@ -44,9 +44,9 @@ import Data.Singletons
 import Data.List.Singletons
 import qualified Numeric.LinearAlgebra.Static.Vector as SA
 import Data.Vector.Storable.Sized as VecSized (toList, fromList) -- Usar isso para converter SA.rVec para listas!
-import Data.Binary
+import Data.Binary as BinLib
 import qualified Data.ByteString.Lazy as BSL
-import qualified GHC.Exts as SV 
+import qualified GHC.Exts as SV
 import Data.List (foldl')
 import System.Random.Shuffle (shuffle')
 
@@ -72,8 +72,16 @@ data Weights i o = W { wBiases  :: !(SA.R o)  -- n
                   deriving (Show, Generic)
 
 
+instance (KnownNat i, KnownNat o) => Eq (Weights i o) where
+  (==) :: Weights i o -> Weights i o -> Bool
+  (==) (W b n) (W b2 n2) = and [(SA.rVec b == SA.rVec b2),  (SA.lVec n == SA.lVec n2)]
 
-data Activation = Linear | Logistic | Tangent | ReLu {-| LeakyReLu | ELU Double-} deriving (Show, Generic)
+instance (KnownNat i, KnownNat o) => Binary (Weights i o)
+
+
+data Activation = Linear | Logistic | Tangent | ReLu {-| LeakyReLu | ELU Double-} deriving (Show, Generic, Eq)
+
+instance Binary Activation
 
 {-
 -- Define the promoted version of Activation
@@ -119,26 +127,77 @@ instance (KnownNat i, KnownNat o) => Show (Network i hs o) where        -- Imple
   show ((:&~) a f b)  =  "Nos camada: "   ++ show (wNodes a) ++ ", Pesos: " ++ show (wBiases a) ++ ", Funcao de Ativacao: " ++ show f ++ "\n" ++ show b
 
 
+instance (KnownNat i, KnownNat o) => Eq (Network i hs o) where
+  (==) (O w f)       (O w2 f2)        = (w == w2) && (f == f2)
+  (==) ((:&~) w f n) ((:&~) w2 f2 n2) = (w == w2) && (f == f2) && (n == n2)
+  (==) _ _ = False
 
 
-{-
+
 -- Definicao de instancias para serializar a rede:
 
-instance (KnownNat i, KnownNat o) => Binary (Weights i o)
-instance Binary Activation
-instance (KnownNat i, KnownNat o) => Binary (Network i hs o)
+{-
+
+
+randomNet :: forall m i hs o. (MonadRandom m, KnownNat i, SingI hs, KnownNat o)
+          => [Activation]
+          -> m (Network i hs o)
+randomNet  hiddenActivations = go hiddenActivations sing 
+  where
+    go :: forall h  hs'. (KnownNat h)
+       => [Activation] 
+       ->  Sing hs'
+       -> m (Network h  hs' o)
+
+    go actL sizes  = case sizes of
+                        SNil           -> O     <$> randomWeights <*> pure (getAct actL)
+                        SCons SNat ss  -> (:&~) <$> randomWeights <*> pure (getAct actL) <*> go (tail actL) ss
+
+
+
+
+-}
+
+
+
+putNet :: (KnownNat i, KnownNat o)
+       => Network i hs o
+       -> Put
+putNet = \case
+            O     w f   -> put (w, f)
+            (:&~) w f n -> put (w, f) *> putNet n
+
+getNet :: forall i hs o. (KnownNat i, KnownNat o, SingI hs) => Get (Network i hs o)
+getNet = go sing
+  where
+    go :: forall j js. (KnownNat j) => Sing js -> Get (Network j js o)
+    go sizes = case sizes of
+                  SNil -> do
+                            (weights, activation) <- BinLib.get
+                            return (O weights activation)
+
+                  (SCons SNat ss) -> do
+                                        (weights, activation) <- BinLib.get
+                                        (:&~) weights activation <$> go ss
+
+
+
+instance (KnownNat i, SingI hs, KnownNat o) => Binary (Network i hs o) where
+  put = putNet
+  get = getNet
+
+
 
 -- Definicao de funcoes para serializar e desserializar a rede
 
 -- Serializa um modelo de Rede para uma ByteString
-serializeNetwork :: Network i hs o -> BSL.ByteString
+serializeNetwork :: (KnownNat i, SingI hs, KnownNat o) => Network i hs o -> BSL.ByteString
 serializeNetwork = encode
 
 -- Desserializa um modelo de Rede a partir de uma ByteString
-deserializeNetwork :: BSL.ByteString -> Network i hs o
+deserializeNetwork :: (KnownNat i, SingI hs, KnownNat o) => BSL.ByteString -> Network i hs o
 deserializeNetwork = decode
 
--}
 
 
 -- Auxiliar definition of activation functions and it's derivatives
@@ -263,10 +322,10 @@ getAct []     = Linear
 randomNet :: forall m i hs o. (MonadRandom m, KnownNat i, SingI hs, KnownNat o)
           => [Activation]
           -> m (Network i hs o)
-randomNet  hiddenActivations = go hiddenActivations sing 
+randomNet  hiddenActivations = go hiddenActivations sing
   where
     go :: forall h  hs'. (KnownNat h)
-       => [Activation] 
+       => [Activation]
        ->  Sing hs'
        -> m (Network h  hs' o)
 
@@ -405,6 +464,9 @@ stringToSamples x = map (map readSamples . words) (lines x)
                         readSamples y = read y :: Double
 
 
+compareNets :: (Eq a) => a -> a -> Bool
+compareNets a b = if a == b then True else False
+
 
 
 main :: IO ()
@@ -429,6 +491,11 @@ main = do
 
     initialNet :: Network 2 '[5] 1 <- randomNet [(Logistic), Linear]
 
+    initialNet2 :: Network 2 '[5] 1 <- randomNet [(Logistic), Linear]
+
+    putStrLn $ "initialNet e initialNet2 sao iguais? R: " ++ show ( initialNet == initialNet2)
+    putStrLn $ "initialNet e initialNet sao iguais? R: " ++ show ( initialNet == initialNet) 
+
     --putStrLn "\n\n\nImprimindo a rede inicial teste:\n"
     --print initialNet
 
@@ -445,6 +512,8 @@ main = do
                                   (fromMaybe 1000 n   )   -- init value 150 log log 
                                   (take 100 samples)
                                    dimensions
+
+    putStrLn $ "initialNet e netTrained sao iguais? R: " ++ show ( initialNet == netTrained) 
 
     putStrLn "\n\nRede atualizada apos treino: \n\n"
     print netTrained
@@ -467,13 +536,14 @@ main = do
     --print netTrained
 
 
-    --putStrLn "\n\nSalvando rede treinada em arquivo: redetreinada.tsnn...."
-    --BSL.writeFile "redetreinada.tsnn" $ encode netTrained
-    --putStrLn "\nCarregando rede treianda do arquivo e exibindo:"
-    --byteStringNet <- BSL.readFile "redetreinada.tsnn"
-    --let fileTrainedNet = deserializeNetwork byteStringNet
-    --print fileTrainedNet
-    --putStrLn "\nRede salva com sucesso, encerrando a execucao!"
+    putStrLn "\n\nSalvando rede treinada em arquivo: redetreinada.tsnn...."
+    BSL.writeFile "redetreinada.tsnn" $ encode netTrained
+    putStrLn "\nCarregando rede treianda do arquivo e exibindo:"
+    byteStringNet <- BSL.readFile "redetreinada.tsnn"
+    let fileTrainedNet :: Network 2 '[5] 1 = deserializeNetwork byteStringNet  --Necessario saber de antemao o tipo da Network.... 
+    print fileTrainedNet
+    putStrLn $ "netTrained e fileTrainedNet sao iguais? R: " ++ show ( netTrained == fileTrainedNet) 
+    putStrLn "\nRede salva com sucesso, encerrando a execucao!"
 
 (!!?) :: [a] -> Int -> Maybe a
 xs !!? i = listToMaybe (drop i xs)
