@@ -16,7 +16,8 @@
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE StandaloneDeriving  #-}
+--{-# LANGUAGE AllowAmbiguousTypes #-}
 
 module Main where
 
@@ -72,11 +73,11 @@ data SList xs where
 data Weights i o = W { wBiases  :: !(SA.R o)  -- n
                         , wNodes  :: !(SA.L o i)  -- n x m
                       }                              -- "m to n" layer
-                  deriving (Generic)
+                  deriving (Show, Generic)
 
 
 
-data Activation = Linear | Logistic | Tangent | ReLu | LeakyReLu | ELU Double deriving (Show, Generic)
+data Activation = Linear | Logistic | Tangent {-| ReLu | LeakyReLu | ELU Double-} deriving (Show, Generic)
 
 {-
 -- Define the promoted version of Activation
@@ -93,33 +94,36 @@ data SActivation :: Activation -> Type where
 -- $(TH.genSingletons [''Activation])
 
 
---getFunctions :: (Ord a, Floating a) => Activation -> (a -> a, a -> a)
-getFunctions :: (KnownNat i) => Activation -> (SA.R i -> SA.R i, SA.R i -> SA.R i)
+getFunctions :: (Floating a) => Activation -> (a -> a, a -> a)
+--getFunctions :: (KnownNat i) => Activation -> (SA.R i -> SA.R i, SA.R i -> SA.R i)
 getFunctions f = case f of
                   Linear      -> (linear, linear')
                   Logistic    -> (logistic, logistic')
                   Tangent     -> (tangent, tangent')
-                  ReLu        -> (relu, relu')
-                  LeakyReLu   -> (lrelu, lrelu')
-                  ELU a       -> (elu a, elu' a)
+                  --ReLu        -> (relu, relu')
+                  --LeakyReLu   -> (lrelu, lrelu')
+                  --ELU a       -> (elu a, elu' a)
 
 
 data Network :: Nat -> [Nat] -> Nat -> Type where
     O     :: !(Weights i o) -> Activation
           -> Network i '[] o
-    (:&~) :: (KnownNat h, SingI hs)
-          => Weights i h -> Activation
+    (:&~) :: (KnownNat h) => Weights i h -> Activation
           -> !(Network h hs o)
           -> Network i (h ': hs)  o
                                     --deriving (Generic)
 infixr 5 :&~
 
 
-instance (KnownNat i, KnownNat o) => Show (Network i hs o) where        -- Implementacao de instancia de show de Network para facilitar o debug
-  show :: Network i hs o -> String
+{-
+instance (KnownNat i, KnownNat h, SingI (h ': hs), KnownNat o) => Show (Network i (h ': hs) o) where        -- Implementacao de instancia de show de Network para facilitar o debug
+  show :: (KnownNat i, KnownNat h, SingI (h ': hs), KnownNat o) => Network i (h ': hs) o -> String
   show (O a f)          =  "Nos de saida: " ++ show (wNodes a) ++ ", Pesos: " ++ show (wBiases a) ++ ", Funcao de Ativacao: " ++ show f
   show ((:&~) a f b)  =  "Nos camada: "   ++ show (wNodes a) ++ ", Pesos: " ++ show (wBiases a) ++ ", Funcao de Ativacao: " ++ show f ++ "\n" ++ show b
 
+-}
+
+{-
 
 -- Definicao de instancias para serializar a rede:
 
@@ -137,11 +141,11 @@ serializeNetwork = encode
 deserializeNetwork :: BSL.ByteString -> Network i hs o
 deserializeNetwork = decode
 
-
+-}
 
 -- Auxiliar definition of activation functions and it's derivatives
 
-linear :: a -> a
+linear :: Floating a => a -> a
 linear x = x
 
 linear' :: Floating a => a -> a
@@ -162,13 +166,13 @@ tangent x = (exp x - exp (-x)) / (exp x + exp (-x))
 tangent' :: Floating a => a -> a
 tangent' x = 1 + tangent x * tangent x
 
-
+{-
 --relu :: KnownNat i => SA.R i -> SA.R i
-relu :: Floating a => a -> a
-relu = (max 0)
+relu :: (Floating a, Ord a) => a -> a
+relu x = (max 0) x
 
 --relu' :: SA.R i -> SA.R i
-relu' ::Floating a => a -> a
+relu' :: (Floating a, Ord a) => a -> a
 relu' x = if x > 0 then 1 else 0
 
 
@@ -193,6 +197,10 @@ elu' :: (KnownNat n) => Double -> SA.R n -> SA.R n
 elu' a y = StaticVector.vecR $ cmap (\x -> if x >= 0 then 1 else a + a * (exp x - 1)) $ StaticVector.rVec y
 
 
+
+-}
+
+
 -- Auxiliar way to define a derivative of a function, using limits (can be very unprecise)
 derive :: (Fractional a) => a -> (a -> a) -> (a -> a)
 derive h f x = (f (x+h) - f x) / h
@@ -200,27 +208,27 @@ derive h f x = (f (x+h) - f x) / h
 
 -- Definiton of NetFilters to output of the neural network
 
-data NetFilter = BinaryOutput | SoftMax deriving Show
+data NetFilter = BinaryOutput {-| SoftMax-} deriving Show
 
 
-getFilter :: NetFilter -> (SA.R i-> SA.R i)
+getFilter :: (KnownNat i) => NetFilter -> (SA.R i-> SA.R i)
 getFilter f = case f of
 
                 BinaryOutput   ->   binaryOutput
-                SoftMax        ->   softmaxOut
+                --SoftMax        ->   softmaxOut
 
 
 -- Auxiliar definitions to  Filters
 
-binaryOutput :: SA.R i -> SA.R i
-binaryOutput x = StaticVector.vecR $ cmap (\y -> if y > 0.5 then 1 else 0) $ StaticVector.rVec x
+binaryOutput :: (KnownNat i) => SA.R i -> SA.R i
+binaryOutput x = SA.dvmap (\y -> if y > 0.5 then 1 else 0) x
 
 
-softmaxOut :: SA.R i -> SA.R i
-softmaxOut x = StaticVector.vecR $ cmap (/ sumElements expX) expX
+{-softmaxOut :: (KnownNat i) => SA.R i -> SA.R i
+softmaxOut x = SA.dvmap (/ total) SA.expm x
               where
-                  expX = cmap exp $ StaticVector.rVec x
-
+                  total = sumElements $ SA.expm x
+-}
 
 -- Definitions of functions to run the network itself
 
@@ -253,26 +261,22 @@ getAct :: [Activation] -> Activation
 getAct (a:as) = a
 getAct []     = Linear
 
+
 randomNet :: forall m i hs o. (MonadRandom m, KnownNat i, SingI hs, KnownNat o)
           => [Activation]
           -> m (Network i hs o)
-randomNet  hiddenActivations = go  sing hiddenActivations
+randomNet  hiddenActivations = go hiddenActivations sing 
   where
-    go :: forall h  hs' . (KnownNat h, SingI hs')
-       => Sing hs'
-       -> [Activation]
+    go :: forall h  hs'. (KnownNat h)
+       => [Activation] 
+       ->  Sing hs'
        -> m (Network h  hs' o)
-    go SNil actL = do
-                        weights <- randomWeights
-                        return $ O weights (getAct actL)
-    go (SCons size sizes) actL = do
-                                                    weights <- randomWeights
-                                                    rest <- go sizes (tail actL)
-                                                    return $ (:&~) weights (getAct actL) rest
 
-    go _ _  = error "Mismatch between hidden sizes and activations"
+    go actL sizes  = case sizes of
+                        SNil           -> O     <$> randomWeights <*> pure (getAct actL)
+                        SCons SNat ss  -> (:&~) <$> randomWeights <*> pure (getAct actL) <*> go (tail actL) ss
 
-
+{-
 -- Training function, train the network for just one iteration
 
 train :: forall i hs o. (KnownNat i, KnownNat o)
@@ -392,7 +396,7 @@ checkAccuracy xs = 100 * foldr checkAc 0 xs / fromIntegral(length xs)
 
                         checkAc (_, expO, netO) acc = if expO == netO then acc + 1 else acc
 
-
+-}
 
 
 stringToSamples :: String -> [[Double]]
@@ -405,9 +409,9 @@ stringToSamples x = map (map readSamples . words) (lines x)
 
 main :: IO ()
 main = do
-    args <- getArgs
-    let n    = readMaybe =<< (args !!? 0)
-        rate = readMaybe =<< (args !!? 1)
+    --args <- getArgs
+    --let n    = readMaybe =<< (args !!? 0)
+    --    rate = readMaybe =<< (args !!? 1)
     samplesFile <- readFile "/home/kali/Downloads/UFABC/PGC/Github/TypeSafeNeuralNetwork/inputs/inputs30K.txt"
 
     -- Read input file to get all samples to train the neural network!
@@ -421,47 +425,47 @@ main = do
     -- Exemplo que mostra que a rede nao esta segura contra formas incoerentes...
     testNet :: Network 2 '[2, 3] 1 <- randomNet [Logistic, Logistic, Logistic]
 
-    initialNet :: Network 2 '[5] outputD <- randomNet [(ELU 0.5), Linear]
+    initialNet :: Network 2 '[5] 1 <- randomNet [(Logistic), Linear]
 
     putStrLn "\n\n\nImprimindo a rede inicial teste:\n"
-    print initialNet
+    --print initialNet
 
 
     putStrLn "\n\nTraining network..."
 
-    (_, _, netTrained, outputS) <- netTrain initialNet
-                                 (fromMaybe 0.00025   rate)  -- init v 0.0025
-                                 (fromMaybe 1000 n   )   -- init value 150 log log 
-                                 (take 20000 samples)
-                                 dimensions
+    --(_, _, netTrained, outputS) <- netTrain initialNet
+    --                             (fromMaybe 0.00025   rate)  -- init v 0.0025
+    --                             (fromMaybe 1000 n   )   -- init value 150 log log 
+    --                             (take 20000 samples)
+    --                             dimensions
 
 
 
     putStrLn "\n\n\nImprimindo predicao agora treinada:\n"
-    putStrLn $ "\nAcuracia: " ++ show (checkAccuracy outputS) ++ " %"
+    --putStrLn $ "\nAcuracia: " ++ show (checkAccuracy outputS) ++ " %"
     --putStrLn $ renderOutput outputS
     putStrLn "\n\n\nImprimindo predicao treinada, agora com filtro de saida da rede:\n"
-    let filteredResults = runNetFiltered netTrained (take 20000 samples) dimensions BinaryOutput
-    putStrLn $ "\nAcuracia: " ++ show (checkAccuracy filteredResults) ++ " %"
+    --let filteredResults = runNetFiltered netTrained (take 20000 samples) dimensions BinaryOutput
+    --putStrLn $ "\nAcuracia: " ++ show (checkAccuracy filteredResults) ++ " %"
     --putStrLn $ renderOutput filteredResults
 
 
     putStrLn "\n\n\nVerificando agora a performance em samples que nao foram usadas no treino:"
-    let filteredResultsFinal = runNetFiltered netTrained (drop 20000 samples) dimensions BinaryOutput
-    putStrLn $ "\nAcuracia: " ++ show (checkAccuracy filteredResultsFinal) ++ " %"
+    --let filteredResultsFinal = runNetFiltered netTrained (drop 20000 samples) dimensions BinaryOutput
+    --putStrLn $ "\nAcuracia: " ++ show (checkAccuracy filteredResultsFinal) ++ " %"
     --putStrLn $ renderOutput filteredResultsFinal
 
     putStrLn "\n\n\nAgora imprimindo a rede final:\n"
-    print netTrained
+    --print netTrained
 
 
-    putStrLn "\n\nSalvando rede treinada em arquivo: redetreinada.tsnn...."
-    BSL.writeFile "redetreinada.tsnn" $ encode netTrained
-    putStrLn "\nCarregando rede treianda do arquivo e exibindo:"
-    byteStringNet <- BSL.readFile "redetreinada.tsnn"
-    let fileTrainedNet = deserializeNetwork byteStringNet
-    print fileTrainedNet
-    putStrLn "\nRede salva com sucesso, encerrando a execucao!"
+    --putStrLn "\n\nSalvando rede treinada em arquivo: redetreinada.tsnn...."
+    --BSL.writeFile "redetreinada.tsnn" $ encode netTrained
+    --putStrLn "\nCarregando rede treianda do arquivo e exibindo:"
+    --byteStringNet <- BSL.readFile "redetreinada.tsnn"
+    --let fileTrainedNet = deserializeNetwork byteStringNet
+    --print fileTrainedNet
+    --putStrLn "\nRede salva com sucesso, encerrando a execucao!"
 
 (!!?) :: [a] -> Int -> Maybe a
 xs !!? i = listToMaybe (drop i xs)
