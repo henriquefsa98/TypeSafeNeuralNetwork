@@ -1,6 +1,6 @@
 # TypeSafeNeuralNetwork
 
-A Type Safe neural network developted using Haskell, with it's Layers dimensions typed, and Activation functions inserted on the structure!
+A Type Safe neural network developed using Haskell, with it's Layers dimensions typed, and Activation functions inserted on the structure!
 
 This is a Graduation Project in Computing, made by Henrique Fantato, advised by Professors PhD. Emilio Francesquini and PhD. Fabricio Olivetti, 
 at Federal University of ABC, Brazil.
@@ -79,7 +79,7 @@ To use the neural network implemented in this code, follow these steps:
 
 
 
-## Developted
+## Development
 
 
  This Neural network implementation was developed with type safety in mind. First, a version without any type-safe was constructed, to serve as 
@@ -144,7 +144,7 @@ guidelines for the type-safe implementation.
  be able to modify the network activations.
 
   By choosing to enable the insertion of Activation function in the constructors of the Network, the implementation of this repository need to refactor all 
- of the auxiliary functions and definitions of the Network and its Weights, in a manner that all code developted needs to account for the compatibility of 
+ of the auxiliary functions and definitions of the Network and its Weights, in a manner that all code developed needs to account for the compatibility of 
  Nat sizes, and the existent activation function of each layer.
 
   For example, those are the original definition of the Network structure and constructors:
