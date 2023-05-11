@@ -1,14 +1,15 @@
 # TypeSafeNeuralNetwork
 
-A Type Safe neural network developted using Haskell, with it's Layers dimensions typed, and Activations functions inserted on the structure!
+A Type Safe neural network developted using Haskell, with it's Layers dimensions typed, and Activation functions inserted on the structure!
 
 This is a Graduation Project in Computing, made by Henrique Fantato, advised by Professors PhD. Emilio Francesquini and PhD Fabricio Olivetti.
 
-This project motivation is developing a functional programming code in Haskell, applying Type-Driven development concepts, with the objective of 
+This project's motivation is developing a functional programming code in Haskell, applying Type-Driven development concepts, with the objective of 
 creating a Type-Safe Neural Network, utilizing the HMatrix lib to provide and optimize Linear algebra calculations and Typed Structure. 
-All of this to avoid constructions errors, that lead to calculations errors and could break all the execution of the neural network.
+All of this to avoid constructions errors, that lead to calculation errors and could break all the execution of the neural network.
 
-This repository contains a library for building and training typed neural networks. It provides functionality for defining network architectures, training the networks using backpropagation, and applying the trained networks for inference tasks.
+
+This repository contains a library for building and training typed neural networks. It provides functionalities for defining network architectures, training the networks using backpropagation, and applying the trained networks for inference tasks.
 
 
 ## Features
@@ -90,13 +91,13 @@ guidelines for the type-safe implementation.
         (:&~) (W 2 5) (O 2 1)             Incompatible Weights! 
 
 
- And this kind of problem would only thrown an error at execution time, when the calculations between Vectors and Matrix breake the code from incompatible sizes.
+ And this kind of problem would only thrown an error at execution time, when the calculations between Vectors and Matrices break the code from incompatible sizes.
  So an user is able do declare a non functional network, and it will only show an error at execution time. Futhermore, you can't choose an activation function for
  each layer of the network, limiting possible architectures and restricting the problems that the Neural network could solve. 
 
 
 
- To solve this problem, we can bring the size of the layers to the type level, by using typed vectors and matrix in the network definition and constructors and 
+ To solve this problem, we can bring the size of the layers to the type level, by using typed vectors and matrices in the network definition and constructors and 
  inserting a activation data for each layer:
 
         data Weights i o = W { wBiases  :: !(SA.R o), wNodes   :: !(SA.L o i)}
@@ -112,7 +113,7 @@ guidelines for the type-safe implementation.
         infixr 5 :&~
 
 
- Now the network input, hidden and output sizes are all typed, and the constructor guarantee that all conected layers should have compatible sizes, and we define 
+ Now the network input, hidden layers and output sizes are all typed, and the constructor guarantee that all conected layers should have compatible sizes, and we define 
  each layer activation with the constructor.
 
  All other functions and definitions should guarantee all the sizes constraints to be implemented, so we get correctness from the types at the development of all functions.
@@ -154,25 +155,25 @@ guidelines for the type-safe implementation.
 ## References
 
 
-- BRADY, E. Type-driven development with Idris. [S.l.]: Simon and Schuster, 2017. Citado
-  2 vezes nas páginas 2 e 11.
+- BRADY, E. Type-driven development with Idris. [S.l.]: Simon and Schuster, 2017. Cited 
+on pages 2 and 11.
 
 - EISENBERG, R. A.; WEIRICH, S. Dependently typed programming with singletons.
   ACM SIGPLAN Notices, ACM New York, NY, USA, v. 47, n. 12, p. 117–130, 2012.
-  Citado na página 4.
+  Cited on page 4.
 
 - JOHNSON, J.; PICTON, P. How to train a neural network:an introduction to the new
-  computational paradigm. Complexity, v. 1, n. 6, p. 13–28, 1996. Citado na página 4.
+  computational paradigm. Complexity, v. 1, n. 6, p. 13–28, 1996. Cited on page 4.
 
 - MAGUIRE, S. Thinking with Types, Type-Level Programming in Haskell. [S.l.]: LeanPub,
-  2019. Citado na página 3.
+  2019. Cited on page 3..
 
 - PICTON, P. What is a neural network? In: Introduction to Neural Networks. [S.l.]:
-  Springer, 1994. p. 1–12. Citado na página 4.
+  Springer, 1994. p. 1–12. Cited on page 4.
 
 - VOLDER, K. D. Type-oriented logic meta programming. Tese (Doutorado) — Citeseer,
-  1998. Citado na página 2.
+  1998. Cited on page 2.
 
 - WANG, S.-C. Artificial neural network. In: Interdisciplinary computing in java
-  programming. [S.l.]: Springer, 2003. p. 81–100. Citado na página 4.
+  programming. [S.l.]: Springer, 2003. p. 81–100. Cited on page 4.
 
