@@ -461,8 +461,8 @@ main = do
     putStrLn "\n\nTraining network..."
 
     (_, _, netTrained, outputS) <- netTrain initialNet
-                                  (fromMaybe 0.0025   rate)  -- init v 0.0025
-                                  (fromMaybe 1000 n   )   -- init value 150 log log 
+                                  (fromMaybe 0.0025   rate)  
+                                  (fromMaybe 1000 n   )   
                                   (take 100 samples)
                                    dimensions
 
