@@ -29,13 +29,13 @@ training the networks using backpropagation, and applying the trained networks f
 
 To use this library, you need to have GHC (Glasgow Haskell Compiler) and Cabal installed on your system. Follow the steps below to install the library:
 
-1. Clone this repository: git clone <repository_url>
+1. Clone this repository: `git clone <repository_url>`
 
-2. Navigate to the project directory: cd TypeSafeNeuralNetwork
+2. Navigate to the project directory: `cd TypeSafeNeuralNetwork`
 
-3. Build the project using Stack: Stack build
+3. Build the project using Stack: `Stack build`
 
-4. Run it!: Stack run
+4. Run it!: `Stack run`
  
 
 
@@ -46,30 +46,39 @@ To use the neural network implemented in this code, follow these steps:
 
 1. Define the architecture of your neural network using the provided types, a list of Activations and the randomNet function. For example:
 
-        networkExample :: Network 2 '[3, 2] 1 <- randomNet [Logistic, ReLu, Linear]
+        ```haskellnetworkExample :: Network 2 '[3, 2] 1 <- randomNet [Logistic, ReLu, Linear]
+        ```
 
 
 2. Train it by using the netTrain function:
 
-        (_, _, trainedNetwork, outputS) <- netTrain initialNet learningRate numIterations samples  (inputSize, outputSize)    
+        ```haskell
+        (_, _, trainedNetwork, outputS) <- netTrain initialNet learningRate numIterations samples  (inputSize, outputSize)`
+        ```
 
 
 3. Check the accuracy of the trained network by using checkAccuracy function: 
 
+        ```haskell
         putStrLn $ show (checkAccuracy outputS)
+        ```
 
 4. Print the output on stdin:
 
+        ```haskell
         putStrLn $ renderOutput outputS
+        ```
 
 5. Show the current structure of the trained network:
 
+        ```haskell
         print netTrained
+        ```
 
 
 
 
-## Development
+## Developted
 
 
  This Neural network implementation was developed with type safety in mind. First, a version without any type-safe was constructed, to serve as 
@@ -80,6 +89,7 @@ guidelines for the type-safe implementation.
 
 
 
+        ```haskell
         data Weights = W { wBiases :: !(Vector Double), wNodes  :: !(Matrix Double)}  
 
         data Network :: * where
@@ -91,7 +101,8 @@ guidelines for the type-safe implementation.
         infixr 5 :&~
         
 
-        (:&~) (W 2 5) (O 2 1)             Incompatible Weights! 
+        net = (:&~) (W 2 5) (O 2 1)             --Incompatible Weights!
+        ```
 
 
  And this kind of problem would only thrown an error at execution time, when the calculations between Vectors and Matrices break the code from incompatible sizes.
@@ -103,6 +114,7 @@ guidelines for the type-safe implementation.
  To solve this problem, we can bring the size of the layers to the type level, by using typed vectors and matrices in the network definition and constructors and 
  inserting a activation data for each layer:
 
+        ```haskell
         data Weights i o = W { wBiases  :: !(SA.R o), wNodes   :: !(SA.L o i)}
             
         data Activation = Linear | Logistic | Tangent | ReLu | LeakyReLu | ELU Double
@@ -114,6 +126,7 @@ guidelines for the type-safe implementation.
               -> !(Network h hs o)
               -> Network i (h ': hs)  o
         infixr 5 :&~
+        ```
 
 
  Now the network input, hidden layers and output sizes are all typed, and the constructor guarantee that all conected layers should have compatible sizes, and 
@@ -124,6 +137,115 @@ guidelines for the type-safe implementation.
 
 
 
+### Differences between Justin Le work
+
+
+  The fundamental difference between this implementation and Justin Le's one is the inclusion of Activations functions in the Network construtors themselves. 
+ Le's implementation used a static logistic activation, defined at the training function, so you can't choose neither another function or choose different 
+ functions for each layer. This choice prevents the network from being able to resolve a lot of problems, and make the learning process even harder by not 
+ be able to modify the network activations.
+
+  By choosing to enable the insertion of Activation function in the constructors of the Network, the implementation of this repository need to refactor all 
+ of the auxiliary functions and definitions of the Network and its Weights, in a manner that all code developted needs to account for the compatibility of 
+ Nat sizes, and the existent activation function of each layer.
+
+  For example, those are the original definition of the Network structure and constructors:
+
+                ```haskell
+                data Network :: Nat -> [Nat] -> Nat -> * where
+                                O     :: !(Weights i o)
+                                        -> Network i '[] o
+                                (:&~) :: KnownNat h
+                                 => !(Weights i h)
+                                -> !(Network h hs o)
+                                -> Network i (h ': hs) o
+                infixr 5 :&~
+                ```
+
+  But now, those are the new Network structure and constructors:
+
+
+                ```haskell
+                data Activation = Linear | Logistic | Tangent | ReLu | LeakyReLu | ELU Double deriving (Show, Generic, Eq)
+
+                data Network :: Nat -> [Nat] -> Nat -> Type where
+                                O     :: !(Weights i o) -> Activation
+                                -> Network i '[] o
+                                (:&~) :: (KnownNat h) => Weights i h -> Activation
+                                -> !(Network h hs o)
+                                -> Network i (h ': hs)  o
+                infixr 5 :&~
+                ```
+  
+  Now, for each layer of the Network, we need to provide a Activation, making the net so more adaptive and powerfull. For each 
+ Activation, we need to provide both the function and its derivative, like ReLu activation below:
+
+                ```haskell
+
+
+                -- ReLu activation and its derivative 
+                relu ::  KnownNat i =>  SA.R i -> SA.R i
+                relu x = SA.vecR $ VecSized.map (max 0) $ SA.rVec x
+
+
+                relu' :: KnownNat i => SA.R i -> SA.R i
+                relu' x = SA.vecR $ VecSized.map (\y -> if y > 0 then 1 else 0) $ SA.rVec x
+
+
+                getFunctions :: (KnownNat i) => Activation -> (SA.R i -> SA.R i, SA.R i -> SA.R i)
+                getFunctions f = case f of
+                                        ReLu      -> (relu, relu')
+
+                ```
+
+  All activation functions and theirs derivatives need to consider the Nat sizes compatibility at type level the be able to run 
+ for all Networks, so that no activation should be able to modify the Vector sizes of any Network constructed, avoiding another 
+ kind of problems.
+
+  Le's implementation does not provide a typed training function, so this repository implement it, using Backpropagation and 
+ stochastic gradient descent, for adjusting all of Network Weights according to prediction errors.
+
+  Another new capability implementation is the definition of Filters, to be able to run a Network with filters on it's output. This 
+ bring another level of adaptability for the Network, as some problems require a binary output, but a binary output in the trainig 
+ phase is not able to backpropagate the current layer predictions errors to its previous layers, breaking all the learning proccess.
+
+
+  Those are some NetFilter implementations available at this repositoty:
+
+                ```haskell
+                data NetFilter = BinaryOutput | SoftMax deriving Show
+
+                -- Filter that makes the Network only output 0 or 1, a binary output
+                binaryOutput :: (KnownNat i) => SA.R i -> SA.R i
+                binaryOutput = SA.dvmap (\y -> if y > 0.5 then 1 else 0)
+
+                -- Filter that makes the Network output a probability distribution, good for classifications
+                softmaxOut :: (KnownNat i) => SA.R i -> SA.R i
+                softmaxOut x = SA.vecR $ VecSized.map (/ total) $ VecSized.map exp $ SA.rVec x
+                              where
+                                  total =  VecSized.foldr (+) 0 $ VecSized.map exp $ SA.rVec x
+
+
+                getFilter :: (KnownNat i) => NetFilter -> (SA.R i-> SA.R i)
+                getFilter f = case f of
+                                BinaryOutput   ->   binaryOutput
+                                SoftMax        ->   softmaxOut
+
+
+                -- Function to run the Network over a list of Samples, and applaying a NetFilter
+                runNetFiltered :: (KnownNat i, KnownNat o) => Network i hs o -> [[Double]] -> (Int, Int) -> NetFilter -> [(SA.R i, SA.R o, SA.R o)]
+                runNetFiltered net samples (inputD, outputD) filterF = [ ( SA.vector $ take inputD x, SA.vector $ lastN outputD x, nnFilter (runNet net ( SA.vector (take inputD x)))) | x <- samples ]
+
+                                                                            where
+                                                                            
+                                                                                nnFilter = getFilter filterF
+
+                ```
+
+  There are anothers modifications and new implementations on this repository, those above are just for illustrate the differences between this repository and 
+ Justin Le's one. 
+
+
 
 ## Future implementations
 
@@ -132,9 +254,11 @@ guidelines for the type-safe implementation.
  activations to be compatible with the Weights sizes and that each layer must have a activation associated with it. At the current stage of development, the Activations are a list 
  argument that isn't required to be exactly the same length as the Network, so to avoid not having a Activation for a layer, the function 'getAct' was implemented to work around this flaw:
 
+        ```haskell
         getAct :: [Activation] -> Activation
         getAct (a:_)  = a
         getAct []     = Linear
+        ```
  
  - Implement a existential wrapper for Network, to be able to create, save and load networks without the need of specifying the sizes at type level, by creating Binary instances, 
  put/get methods and constructors.

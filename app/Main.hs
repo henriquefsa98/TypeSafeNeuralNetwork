@@ -207,14 +207,14 @@ elu' a y = SA.vecR $ VecSized.map (\x -> if x >= 0 then 1 else a + a * (exp x - 
 
 -- Definiton of NetFilter, cllass of filters to the output of the neural network
 
-data NetFilter = BinaryOutput {-| SoftMax-} deriving Show
+data NetFilter = BinaryOutput | SoftMax deriving Show
 
 
 getFilter :: (KnownNat i) => NetFilter -> (SA.R i-> SA.R i)
 getFilter f = case f of
 
                 BinaryOutput   ->   binaryOutput
-                --SoftMax        ->   softmaxOut
+                SoftMax        ->   softmaxOut
 
 
 -- Auxiliar definitions to  Filters, implementation of the filters themselves
@@ -227,7 +227,7 @@ binaryOutput = SA.dvmap (\y -> if y > 0.5 then 1 else 0)
 
 -- Filter that makes the Network output a probability distribution, good for classifications
 softmaxOut :: (KnownNat i) => SA.R i -> SA.R i
-softmaxOut x = SA.vecR $ VecSized.map (/ total) $ SA.rVec x
+softmaxOut x = SA.vecR $ VecSized.map (/ total) $ VecSized.map exp $ SA.rVec x
               where
                   total =  VecSized.foldr (+) 0 $ VecSized.map exp $ SA.rVec x
 
