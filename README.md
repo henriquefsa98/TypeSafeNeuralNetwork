@@ -2,20 +2,22 @@
 
 A Type Safe neural network developted using Haskell, with it's Layers dimensions typed, and Activation functions inserted on the structure!
 
-This is a Graduation Project in Computing, made by Henrique Fantato, advised by Professors PhD. Emilio Francesquini and PhD Fabricio Olivetti.
+This is a Graduation Project in Computing, made by Henrique Fantato, advised by Professors PhD. Emilio Francesquini and PhD. Fabricio Olivetti, 
+at Federal University of ABC, Brazil.
 
 This project's motivation is developing a functional programming code in Haskell, applying Type-Driven development concepts, with the objective of 
 creating a Type-Safe Neural Network, utilizing the HMatrix lib to provide and optimize Linear algebra calculations and Typed Structure. 
 All of this to avoid constructions errors, that lead to calculation errors and could break all the execution of the neural network.
 
 
-This repository contains a library for building and training typed neural networks. It provides functionalities for defining network architectures, training the networks using backpropagation, and applying the trained networks for inference tasks.
+This repository contains a library for building and training typed neural networks. It provides functionalities for defining network architectures, 
+training the networks using backpropagation, and applying the trained networks for inference tasks.
 
 
 ## Features
 
 - Definition of network architecture using type-level GADT's 
-- Support for various activation functions, including linear, logistic, tangent, ReLU, Leaky ReLU, and ELU
+- Support for various activation functions, including Linear, Logistic, Tangent, ReLU, Leaky ReLU, and ELU
 - Serialization and deserialization of network structures
 - Random initialization of network weights
 - Training of networks using backpropagation and stochastic gradient descent
@@ -73,7 +75,8 @@ To use the neural network implemented in this code, follow these steps:
  This Neural network implementation was developed with type safety in mind. First, a version without any type-safe was constructed, to serve as 
 guidelines for the type-safe implementation. 
  
- The major problem with a type-unsafe implementation is that the user can define a Network Structure with incompatible layers sizes, breaking all the execution:
+ The major problem with a type-unsafe implementation is that the user can define a Network Structure with incompatible layers sizes, breaking all 
+ the execution:
 
 
 
@@ -113,10 +116,11 @@ guidelines for the type-safe implementation.
         infixr 5 :&~
 
 
- Now the network input, hidden layers and output sizes are all typed, and the constructor guarantee that all conected layers should have compatible sizes, and we define 
- each layer activation with the constructor.
+ Now the network input, hidden layers and output sizes are all typed, and the constructor guarantee that all conected layers should have compatible sizes, and 
+ we define each layer activation with the constructor.
 
- All other functions and definitions should guarantee all the sizes constraints to be implemented, so we get correctness from the types at the development of all functions.
+ All other functions and definitions should guarantee that all the sizes constraints are respected to be implemented, so we get correctness from the types at 
+ the development of all functions.
 
 
 
@@ -125,9 +129,15 @@ guidelines for the type-safe implementation.
 
 
  - To get to a even more type-driven neural network, as future development, bringing the Activations to the type level would increase the correctness of code by requiring that all 
- activations to be compatible with the Weights sizes and that each layer must have a activation associated with it. 
+ activations to be compatible with the Weights sizes and that each layer must have a activation associated with it. At the current stage of development, the Activations are a list 
+ argument that isn't required to be exactly the same length as the Network, so to avoid not having a Activation for a layer, the function 'getAct' was implemented to work around this flaw:
+
+        getAct :: [Activation] -> Activation
+        getAct (a:_)  = a
+        getAct []     = Linear
  
- - Implement a existential wrapper for Network, to be able to create, save and load networks without the need of specifying the sizes at type level.
+ - Implement a existential wrapper for Network, to be able to create, save and load networks without the need of specifying the sizes at type level, by creating Binary instances, 
+ put/get methods and constructors.
 
  - Implement the existential equivalent functions to be able to run the Existential Network.
 
@@ -143,7 +153,7 @@ guidelines for the type-safe implementation.
  https://github.com/mstksg/inCode/tree/master
 
 
- Special thanks to both professors PhD Emilio Francesquini and PhD Fabricio Olivetti for all the guidance, help (and Debugging :D) 
+ Special thanks to both professors PhD. Emilio Francesquini and PhD. Fabricio Olivetti for all the guidance and help (and Debugging :D) 
  through the development of the project!
 
  https://www.ufabc.edu.br/ensino/docentes/emilio-de-camargo-francesquini
