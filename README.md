@@ -135,10 +135,10 @@ guidelines for the type-safe implementation.
 
 
 
-### Differences between Justin Le work
+### Differences between Justin Le implementation
 
 
-  The fundamental difference between this implementation and Justin Le's one is the inclusion of Activations functions in the Network construtors themselves. 
+  The fundamental difference between this implementation and Justin Le's one is the inclusion of Activation in the Network construtors themselves. 
  Le's implementation used a static logistic activation, defined at the training function, so you can't choose neither another function or choose different 
  functions for each layer. This choice prevents the network from being able to resolve a lot of problems, and make the learning process even harder by not 
  be able to modify the network activations.
