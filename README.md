@@ -104,8 +104,8 @@ guidelines for the type-safe implementation.
  ```
 
 
- And this kind of problem would only thrown an error at execution time, when the calculations between Vectors and Matrices break the code from incompatible sizes.
- So an user is able do declare a non functional network, and it will only show an error at execution time. Futhermore, you can't choose an activation function for
+  And this kind of problem would only throw an error at execution time, when the calculations between Vectors and Matrices break the code from incompatible sizes.
+ So an user is able to declare a non functional network, and it will only show an error at execution time. Futhermore, you can't choose an activation function for
  each layer of the network, limiting possible architectures and restricting the problems that the Neural network could solve. 
 
 
@@ -141,7 +141,7 @@ guidelines for the type-safe implementation.
   The fundamental difference between this implementation and Justin Le's one is the inclusion of Activation in the Network construtors themselves. 
  Le's implementation used a static logistic activation, defined at the training function, so you can't choose neither another function or choose different 
  functions for each layer. This choice prevents the network from being able to resolve a lot of problems, and make the learning process even harder by not 
- be able to modify the network activations.
+ being able to modify the network activations.
 
   By choosing to enable the insertion of Activation function in the constructors of the Network, the implementation of this repository need to refactor all 
  of the auxiliary functions and definitions of the Network and its Weights, in a manner that all code developed needs to account for the compatibility of 
@@ -197,7 +197,7 @@ guidelines for the type-safe implementation.
 
  ```
 
-  All activation functions and theirs derivatives need to consider the Nat sizes compatibility at type level the be able to run 
+  All activation functions and their derivatives need to consider the Nat sizes compatibility at type level to be able to run 
  for all Networks, so that no activation should be able to modify the Vector sizes of any Network constructed, avoiding another 
  kind of problems.
 
