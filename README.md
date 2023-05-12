@@ -272,8 +272,9 @@ guidelines for the type-safe implementation.
 
 
  This code is based on the work of Justin Le and his Type-Safe Neural Network, his work can be found at:
- 
+
  https://blog.jle.im/entry/practical-dependent-types-in-haskell-1.html
+
  https://github.com/mstksg/inCode/tree/master
 
 
@@ -281,6 +282,7 @@ guidelines for the type-safe implementation.
  through the development of the project!
 
  https://www.ufabc.edu.br/ensino/docentes/emilio-de-camargo-francesquini
+ 
  https://www.ufabc.edu.br/ensino/docentes/fabricio-olivetti-de-franca
 
 
