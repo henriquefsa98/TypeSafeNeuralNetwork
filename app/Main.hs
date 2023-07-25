@@ -13,6 +13,7 @@
 {-# LANGUAGE PolyKinds #-}
 
 
+
 module Main where
 
 
@@ -35,6 +36,7 @@ import Numeric.LinearAlgebra as NonStatic
 import qualified Numeric.LinearAlgebra.Static as SA
 
 import Data.Singletons
+--import Prelude.Singletons
 import Data.List.Singletons
 import qualified Numeric.LinearAlgebra.Static.Vector as SA
 import Data.Vector.Storable.Sized as VecSized (toList, map, foldr)
@@ -42,6 +44,7 @@ import Data.Binary as BinLib
 import qualified Data.ByteString.Lazy as BSL
 import Data.List (foldl')
 import System.Random.Shuffle (shuffle')
+
 
 
 
@@ -101,6 +104,10 @@ instance (KnownNat i, KnownNat o) => Eq (Network i hs o) where
   (==) ((:&~) w f n) ((:&~) w2 f2 n2) = w == w2 && f == f2 && n == n2
 
 
+-- Definition of existencial type for Network:
+
+data OpaqueNet :: Nat -> Nat -> Type where
+  ONet :: Network i hs o -> OpaqueNet i o
 
 
 -- Definition of instance to serialize a Network and the put/get functions:
@@ -205,7 +212,7 @@ elu' a y = SA.vecR $ VecSized.map (\x -> if x >= 0 then 1 else a + a * (exp x - 
 
 
 
--- Definiton of NetFilter, cllass of filters to the output of the neural network
+-- Definiton of NetFilter, class of filters to the output of the neural network
 
 data NetFilter = BinaryOutput | SoftMax deriving Show
 
@@ -253,6 +260,23 @@ runNet = \case
 
 
 
+-- Definitions of functions to run OpaqueNet:
+
+runOpaqueNet :: (KnownNat i, KnownNat o)
+             => OpaqueNet i o
+             -> SA.R i
+             -> SA.R o
+runOpaqueNet (ONet n) = runNet n
+
+numHiddens :: OpaqueNet i o -> Int
+numHiddens (ONet n) = go n
+  where
+    go :: Network i hs o -> Int
+    go = \case
+        O _ _        -> 0
+        (:&~) _ _ n' -> 1 + go n'
+
+
 -- Definitions of functions to generate a random network
 
 
@@ -272,7 +296,7 @@ getAct (a:_)  = a
 getAct []     = Linear
 
 
-
+{- 
 -- Generate a Network with random Weights, based on input, hidden layers and output types, and a list of Activations
 randomNet :: forall m i hs o. (MonadRandom m, KnownNat i, SingI hs, KnownNat o)
           => [Activation]
@@ -287,7 +311,30 @@ randomNet  hiddenActivations = go hiddenActivations sing
     go actL sizes  = case sizes of
                         SNil           -> O     <$> randomWeights <*> pure (getAct actL)
                         SCons SNat ss  -> (:&~) <$> randomWeights <*> pure (getAct actL) <*> go (tail actL) ss
+-}
 
+
+randomNet' :: forall m i hs o. (MonadRandom m, KnownNat i, KnownNat o)
+           => [Activation] -> Sing hs -> m (Network i hs o)
+randomNet' actL = \case
+    SNil            ->     O <$> randomWeights <*> pure (getAct actL)
+    SNat `SCons` ss -> (:&~) <$> randomWeights <*> pure (getAct actL) <*> randomNet' (tail actL) ss
+
+randomNet :: forall m i hs o. (MonadRandom m, KnownNat i, SingI hs, KnownNat o)
+          => [Activation] -> m (Network i hs o)
+randomNet actL = randomNet' actL sing
+
+
+
+
+
+-- Definitions of functions to generate a random Opaque Network
+
+randomONet :: (MonadRandom m, KnownNat i, KnownNat o)
+              => [Integer] -> [Activation]
+              -> m (OpaqueNet i o)
+randomONet hs fs = undefined--case toSing hs of
+                        --SomeSing ss -> ONet <$> randomNet' fs ss
 
 
 
@@ -452,7 +499,7 @@ main = do
     putStrLn $ "initialNet e initialNet2 Eq check? R: " ++ show ( initialNet == initialNet2)
     putStrLn $ "initialNet e initialNet Eq check? R: "  ++ show ( initialNet == initialNet)
 
- 
+
 
     putStrLn "Showing initial Network, before training:\n\n"
     putStrLn "\n\ninitialNet:\n"
@@ -461,8 +508,8 @@ main = do
     putStrLn "\n\nTraining network..."
 
     (_, _, netTrained, outputS) <- netTrain initialNet
-                                  (fromMaybe 0.0025   rate)  
-                                  (fromMaybe 1000 n   )   
+                                  (fromMaybe 0.0025   rate)
+                                  (fromMaybe 1000 n   )
                                   (take 100 samples)
                                    dimensions
 
