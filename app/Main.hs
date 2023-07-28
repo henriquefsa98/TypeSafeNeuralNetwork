@@ -44,6 +44,9 @@ import Data.Binary as BinLib
 import qualified Data.ByteString.Lazy as BSL
 import Data.List (foldl')
 import System.Random.Shuffle (shuffle')
+import GHC.Natural (Natural)
+
+
 
 
 
@@ -109,6 +112,10 @@ instance (KnownNat i, KnownNat o) => Eq (Network i hs o) where
 data OpaqueNet :: Nat -> Nat -> Type where
   ONet :: Network i hs o -> OpaqueNet i o
 
+-- Show instance definition to visualize the Network
+instance (KnownNat i, KnownNat o) => Show (OpaqueNet i o) where
+  show :: OpaqueNet i o -> String
+  show (ONet x) = show x
 
 -- Definition of instance to serialize a Network and the put/get functions:
 
@@ -330,12 +337,12 @@ randomNet actL = randomNet' actL sing
 
 -- Definitions of functions to generate a random Opaque Network
 
-randomONet :: (MonadRandom m, KnownNat i, KnownNat o)
-              => [Integer] -> [Activation]
-              -> m (OpaqueNet i o)
-randomONet hs fs = undefined--case toSing hs of
-                        --SomeSing ss -> ONet <$> randomNet' fs ss
 
+randomONet :: (MonadRandom m, KnownNat i, KnownNat o)
+              => [Natural] -> [Activation]
+              -> m (OpaqueNet i o)
+randomONet hs fs = case toSing hs of
+                        SomeSing ss-> ONet <$> randomNet' fs ss
 
 
 -- Training function, train the network for just one iteration on one sample
@@ -491,6 +498,15 @@ main = do
 
     print (n, rate, inputD, outputD, dimensions)
 
+    putStrLn "Teste do readLn hs, digite:"
+
+    hs :: [Natural] <- readLn
+
+    print hs
+
+    rn :: OpaqueNet 2 1 <- randomONet hs [Linear]
+
+    print rn
 
     initialNet  :: Network 2 '[5] 1    <- randomNet [Logistic, Linear]
 
