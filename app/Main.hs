@@ -86,9 +86,9 @@ getFunctions f = case f of
 
 
 data Network :: Nat -> [Nat] -> Nat -> Type where
-    O     :: !(Weights i o) -> Activation
+    O     :: (KnownNat i, KnownNat o) => !(Weights i o) -> Activation
           -> Network i '[] o
-    (:&~) :: (KnownNat h) => Weights i h -> Activation
+    (:&~) :: (KnownNat h, KnownNat i, KnownNat o) => Weights i h -> Activation
           -> !(Network h hs o)
           -> Network i (h ': hs)  o
 
@@ -110,12 +110,12 @@ instance (KnownNat i, KnownNat o) => Eq (Network i hs o) where
 -- Definition of existencial type for Network:
 
 data OpaqueNet :: Nat -> Nat -> Type where
-  ONet :: Network i hs o -> OpaqueNet i o
+  ONet :: (KnownNat i, SingI hs, KnownNat o) => Network i hs o -> OpaqueNet i o
 
 -- Show instance definition to visualize the Network
 instance (KnownNat i, KnownNat o) => Show (OpaqueNet i o) where
   show :: OpaqueNet i o -> String
-  show (ONet x) = show x
+  show (ONet x) = "Existencial Network: {\n" ++ show x ++ "\n}\n"
 
 -- Definition of instance to serialize a Network and the put/get functions:
 
@@ -337,13 +337,13 @@ randomNet actL = randomNet' actL sing
 
 -- Definitions of functions to generate a random Opaque Network
 
-
+{-
 randomONet :: (MonadRandom m, KnownNat i, KnownNat o)
-              => [Natural] -> [Activation]
+              => [Integer] -> [Activation]
               -> m (OpaqueNet i o)
-randomONet hs fs = case toSing hs of
-                        SomeSing ss-> ONet <$> randomNet' fs ss
-
+randomONet hs fs = case toSing (Prelude.map fromInteger hs) of
+                        SomeSing ss -> ONet <$> randomNet' fs ss
+-}
 
 -- Training function, train the network for just one iteration on one sample
 
@@ -412,12 +412,13 @@ netTrain initnet learningrate nruns samples (inputD, outputD) = do
 
     let trained = trainNTimes initnet (inps, outs) nruns
           where
-            trainNTimes :: (KnownNat i, SingI hs, KnownNat o) => Network i hs o -> ([SA.R i], [SA.R o]) -> Int -> Network i hs o
+            --trainNTimes :: (KnownNat i, SingI hs, KnownNat o) => Network i hs o -> ([SA.R i], [SA.R o]) -> Int -> Network i hs o
             trainNTimes net (i, o) n2
                 | n2 <= 0 = net
                 | otherwise = trainNTimes (foldl' trainEach net (zip i o)) shuffledSamples (n2 - 1)  -- Shuffle the samples at every iteration of training
                         where
-                            trainEach :: (KnownNat i, KnownNat o) => Network i hs o -> (SA.R i, SA.R o) -> Network i hs o
+                            --trainEach :: (KnownNat i, KnownNat o) => Network i hs o -> (SA.R i, SA.R o) -> Network i hs o
+                            --trainEach nt (i2, o2) = nt
                             trainEach nt (i2, o2) = train learningrate i2 o2 nt
 
                             zippedSamples = zip i o
@@ -469,6 +470,20 @@ checkAccuracy xs = 100 * Prelude.foldr checkAc 0 xs / fromIntegral(length xs)
 
 
 
+
+
+-- Definition of functions to run and train a opaque net
+
+{-
+opaqueNetTrain :: (MonadRandom m, MonadIO m, KnownNat i, KnownNat o) =>  OpaqueNet i o -> Double -> Int -> [[Double]] -> (Int, Int) -> m (OpaqueNet i o, [(SA.R i, SA.R 0, SA.R o)], OpaqueNet i o, [(SA.R i, SA.R o, SA.R o)])
+opaqueNetTrain on learningrate nruns samples (inputD, outputD) = case on of
+                                                                    ONet (net :: Network i (hs :: [Nat]) o) -> do
+                                                                                                  (initnet, outMatInit, trained, outMat) <- netTrain net learningrate nruns samples (inputD, outputD)
+                                                                                                  return (ONet initnet, outMatInit, ONet trained, outMat)
+-}
+
+
+
 -- Auxiliar function to read samples from a String
 stringToSamples :: String -> [[Double]]
 stringToSamples x = Prelude.map (Prelude.map readSamples . words) (lines x)
@@ -504,9 +519,21 @@ main = do
 
     print hs
 
-    rn :: OpaqueNet 2 1 <- randomONet hs [Linear]
+    --rn :: OpaqueNet 2 1 <- randomONet hs [Linear]
+    testNet :: Network 2 '[5] 1    <- randomNet [Logistic, Linear]
+    let rn :: OpaqueNet 2 1 = ONet testNet
 
     print rn
+
+    case rn of
+      ONet (net :: Network i is o) -> do
+                          print net
+                          (_, _, _, outputS) <- netTrain net (fromMaybe 0.0025   rate) (fromMaybe 1000 n) (take 100 samples) dimensions
+                          putStrLn $ renderOutput outputS
+
+    print "\n\n"
+
+    qqr :: String <- readLn
 
     initialNet  :: Network 2 '[5] 1    <- randomNet [Logistic, Linear]
 
@@ -525,7 +552,7 @@ main = do
 
     (_, _, netTrained, outputS) <- netTrain initialNet
                                   (fromMaybe 0.0025   rate)
-                                  (fromMaybe 1000 n   )
+                                  (fromMaybe 10000 n   )
                                   (take 100 samples)
                                    dimensions
 
