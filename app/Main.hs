@@ -37,7 +37,7 @@ import qualified Numeric.LinearAlgebra.Static as SA
 
 import Data.Singletons
 --import Prelude.Singletons
-import Data.List.Singletons
+import Data.List.Singletons ( SList(SCons, SNil))
 import qualified Numeric.LinearAlgebra.Static.Vector as SA
 import Data.Vector.Storable.Sized as VecSized (toList, map, foldr)
 import Data.Binary as BinLib
@@ -45,7 +45,7 @@ import qualified Data.ByteString.Lazy as BSL
 import Data.List (foldl')
 import System.Random.Shuffle (shuffle')
 import GHC.Natural (Natural)
-
+import GHC.TypeNats
 
 
 
@@ -337,13 +337,21 @@ randomNet actL = randomNet' actL sing
 
 -- Definitions of functions to generate a random Opaque Network
 
-{-
-randomONet :: (MonadRandom m, KnownNat i, KnownNat o)
-              => [Integer] -> [Activation]
-              -> m (OpaqueNet i o)
-randomONet hs fs = case toSing (Prelude.map fromInteger hs) of
-                        SomeSing ss -> ONet <$> randomNet' fs ss
--}
+
+randomONet :: forall m i o a. (MonadRandom m, KnownNat i, KnownNat o) 
+              => [Activation] -> [Natural]
+                -> m (OpaqueNet i o)
+randomONet fs = \case
+  [] -> do
+        net :: Network i '[] o <- randomNet fs 
+        return (ONet net)
+  x -> case toSing x of --ONet <$> randomNet' fs hs
+            SomeSing si -> do
+                            net :: Network i '[] o <- randomNet fs
+                            return (ONet net)
+
+
+
 
 -- Training function, train the network for just one iteration on one sample
 
@@ -515,11 +523,27 @@ main = do
 
     putStrLn "Teste do readLn hs, digite:"
 
-    hs :: [Natural] <- readLn
+    hs  <- readLn
+
+    let someNat = Prelude.map someNatVal hs
+    case hs of 
+      [] -> do
+            onet :: OpaqueNet 2 1 <- randomONet [Linear] []
+            print "caiu no case []\n"
+            print onet
+      (nat : nats) -> do
+                        onet :: OpaqueNet 2 1 <- randomONet [Linear] (nat : nats)
+                        print "caiu no case nat : nats\n"
+                        print onet
+      
+      
+    print "teste do hs acima\n\n"
+
+    qqrlixo :: String <- readLn
 
     print hs
 
-    --rn :: OpaqueNet 2 1 <- randomONet hs [Linear]
+    --rn3 :: OpaqueNet 2 1 <- randomONet hs [Linear]
     testNet :: Network 2 '[5] 1    <- randomNet [Logistic, Linear]
     let rn :: OpaqueNet 2 1 = ONet testNet
 
