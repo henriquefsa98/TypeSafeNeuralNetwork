@@ -46,6 +46,7 @@ import Data.List (foldl')
 import System.Random.Shuffle (shuffle')
 import GHC.Natural (Natural)
 import GHC.TypeNats
+import GHC.ExecutionStack (Location(Location))
 
 
 
@@ -343,40 +344,15 @@ randomONet :: forall m i o. (MonadRandom m, KnownNat i, KnownNat o)
                 -> m (OpaqueNet i o)
 randomONet fs = \case
   [] -> do
-        net :: Network i '[] o <- innerRandomNet fs
+        net :: Network i '[] o <- randomNet fs
         return (ONet net)
-          where
-            innerRandomNet' :: forall m i hs o. (MonadRandom m, KnownNat i, KnownNat o)
-                              => [Activation] -> Sing hs -> m (Network i hs o)
-            innerRandomNet' actL = \case
-                                      SNil           ->     O <$> randomWeights <*> pure (getAct actL)
-                                      SNat `SCons` ss -> (:&~) <$> randomWeights <*> pure (getAct actL) <*> innerRandomNet' (tail actL) ss
-            innerRandomNet :: forall m i hs o. (MonadRandom m, KnownNat i, SingI hs, KnownNat o)
-                                          => [Activation] -> m (Network i hs o)
-            innerRandomNet actL = innerRandomNet' actL sing
-  x:xs -> case toSing x of --ONet <$> randomNet' fs hs
-            SomeSing si -> do
-                              --net <- innerRandomNet fs
-                              (ONet (net :: Network i hs o)) <- randomONet (tail fs) xs
-                              xnet :: Network i hs o <- innerRandomNet fs
-                              finalnet <- (:&~) <$> randomWeights <*> pure (getAct fs) <*> pure xnet
-                              return (ONet finalnet)
-                            {-case si of
-                              SNil -> do
-                                        xnet <- innerRandomNet' fs sing
-                                        return (ONet xnet)-}
-          where
-            innerRandomNet' :: forall m i hs o. (MonadRandom m, KnownNat i, KnownNat o)
-                              => [Activation] -> Sing hs -> m (Network i hs o)
-            innerRandomNet' actL = \case
-                                      SNil           ->     O <$> randomWeights <*> pure (getAct actL)
-                                      SNat `SCons` ss -> (:&~) <$> randomWeights <*> pure (getAct actL) <*> innerRandomNet' (tail actL) ss
-            innerRandomNet :: forall m i hs o. (MonadRandom m, KnownNat i, SingI hs, KnownNat o)
-                                          => [Activation] -> m (Network i hs o)
-            innerRandomNet actL = innerRandomNet' actL sing
-
-    
-
+  
+  x:xs -> case someNatVal x of  --ONet <$> randomNet' fs hs
+            SomeNat (_ :: Proxy n) -> do 
+                                        let camada :: m(Weights i n) = randomWeights 
+                                        (ONet (recnet :: Network n hs o)) <- randomONet (tail fs) xs
+                                        finalnet <- (:&~) <$> camada <*> pure (getAct fs) <*> pure recnet
+                                        return (ONet finalnet)
 
 
 -- Training function, train the network for just one iteration on one sample
@@ -550,24 +526,20 @@ main = do
     putStrLn "Teste do readLn hs, digite:"
 
     hs  <- readLn
-
-    let someNat = Prelude.map someNatVal hs
-    case hs of 
-      [] -> do
-            onet :: OpaqueNet 2 1 <- randomONet [Linear] []
-            print "caiu no case []"
-            print onet
-      (nat : nats) -> do
-                        onet :: OpaqueNet 2 1 <- randomONet [Linear] (nat : nats)
-                        print "caiu no case nat : nats"
-                        print onet
       
-    xNet :: OpaqueNet 2 1 <- randomONet [Linear] hs
+    xNet :: OpaqueNet 2 1 <- randomONet [Logistic,Logistic,Logistic,Linear] hs
     print xNet
+
+    case xNet of 
+      ONet (net' :: Network 2 hs 1 ) -> do
+                    (_, _, _, outputS) <- netTrain net' (fromMaybe 0.0025   rate) (fromMaybe 1000 n) (take 100 samples) dimensions
+                    putStrLn $ renderOutput outputS
+
+    
     
     print "teste do hs acima\n\n"
 
-    qqrlixo :: String <- readLn
+    _ :: Maybe String <- readLn
 
     print hs
 
@@ -585,7 +557,7 @@ main = do
 
     print "\n\n"
 
-    qqr :: String <- readLn
+    qqr :: Maybe String <- readLn
 
     initialNet  :: Network 2 '[5] 1    <- randomNet [Logistic, Linear]
 
