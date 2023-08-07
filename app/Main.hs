@@ -338,18 +338,44 @@ randomNet actL = randomNet' actL sing
 -- Definitions of functions to generate a random Opaque Network
 
 
-randomONet :: forall m i o a. (MonadRandom m, KnownNat i, KnownNat o) 
+randomONet :: forall m i o. (MonadRandom m, KnownNat i, KnownNat o)
               => [Activation] -> [Natural]
                 -> m (OpaqueNet i o)
 randomONet fs = \case
   [] -> do
-        net :: Network i '[] o <- randomNet fs 
+        net :: Network i '[] o <- innerRandomNet fs
         return (ONet net)
-  x -> case toSing x of --ONet <$> randomNet' fs hs
+          where
+            innerRandomNet' :: forall m i hs o. (MonadRandom m, KnownNat i, KnownNat o)
+                              => [Activation] -> Sing hs -> m (Network i hs o)
+            innerRandomNet' actL = \case
+                                      SNil           ->     O <$> randomWeights <*> pure (getAct actL)
+                                      SNat `SCons` ss -> (:&~) <$> randomWeights <*> pure (getAct actL) <*> innerRandomNet' (tail actL) ss
+            innerRandomNet :: forall m i hs o. (MonadRandom m, KnownNat i, SingI hs, KnownNat o)
+                                          => [Activation] -> m (Network i hs o)
+            innerRandomNet actL = innerRandomNet' actL sing
+  x:xs -> case toSing x of --ONet <$> randomNet' fs hs
             SomeSing si -> do
-                            net :: Network i '[] o <- randomNet fs
-                            return (ONet net)
+                              --net <- innerRandomNet fs
+                              (ONet (net :: Network i hs o)) <- randomONet (tail fs) xs
+                              xnet :: Network i hs o <- innerRandomNet fs
+                              finalnet <- (:&~) <$> randomWeights <*> pure (getAct fs) <*> pure xnet
+                              return (ONet finalnet)
+                            {-case si of
+                              SNil -> do
+                                        xnet <- innerRandomNet' fs sing
+                                        return (ONet xnet)-}
+          where
+            innerRandomNet' :: forall m i hs o. (MonadRandom m, KnownNat i, KnownNat o)
+                              => [Activation] -> Sing hs -> m (Network i hs o)
+            innerRandomNet' actL = \case
+                                      SNil           ->     O <$> randomWeights <*> pure (getAct actL)
+                                      SNat `SCons` ss -> (:&~) <$> randomWeights <*> pure (getAct actL) <*> innerRandomNet' (tail actL) ss
+            innerRandomNet :: forall m i hs o. (MonadRandom m, KnownNat i, SingI hs, KnownNat o)
+                                          => [Activation] -> m (Network i hs o)
+            innerRandomNet actL = innerRandomNet' actL sing
 
+    
 
 
 
@@ -529,14 +555,16 @@ main = do
     case hs of 
       [] -> do
             onet :: OpaqueNet 2 1 <- randomONet [Linear] []
-            print "caiu no case []\n"
+            print "caiu no case []"
             print onet
       (nat : nats) -> do
                         onet :: OpaqueNet 2 1 <- randomONet [Linear] (nat : nats)
-                        print "caiu no case nat : nats\n"
+                        print "caiu no case nat : nats"
                         print onet
       
-      
+    xNet :: OpaqueNet 2 1 <- randomONet [Linear] hs
+    print xNet
+    
     print "teste do hs acima\n\n"
 
     qqrlixo :: String <- readLn
