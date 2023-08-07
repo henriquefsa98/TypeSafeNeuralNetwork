@@ -11,6 +11,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE TypeApplications #-}
 
 
 
@@ -128,8 +129,8 @@ putNet = \case
             O     w f   -> put (w, f)
             (:&~) w f n -> put (w, f) *> putNet n
 
-getNet :: forall i hs o. (KnownNat i, KnownNat o, SingI hs) => Get (Network i hs o)
-getNet = go sing
+getNet2 :: forall i hs o. (KnownNat i, KnownNat o, SingI hs) => Get (Network i hs o)
+getNet2 = go sing
   where
     go :: forall j js. (KnownNat j) => Sing js -> Get (Network j js o)
     go sizes = case sizes of
@@ -141,13 +142,53 @@ getNet = go sing
                                         (weights, activation) <- BinLib.get
                                         (:&~) weights activation <$> go ss
 
+getNet :: forall i hs o. (KnownNat i, KnownNat o)
+       => Sing hs
+       -> Get (Network i hs o)
+getNet = \case
+    SNil            -> do
+                        (weights, activation) <- BinLib.get
+                        return (O weights activation)
+    SNat `SCons` ss -> do
+                        (weights, activation) <- BinLib.get
+                        (:&~) weights activation <$> getNet ss
 
 
 instance (KnownNat i, SingI hs, KnownNat o) => Binary (Network i hs o) where
   put = putNet
-  get = getNet
+  get = getNet sing  -- caso voltar para o get anterior, tirar o sing
 
 
+-- Definition of instance to serialize a OpaqueNet and the put/get functions:
+
+hiddenStruct :: Network i hs o -> [Natural]
+hiddenStruct = \case
+    O _  _  -> []
+    (:&~) _ _  (n' :: Network h hs' o)
+           -> natVal (Proxy @h)
+            : hiddenStruct n'
+
+            
+putONet :: (KnownNat i, KnownNat o)
+        => OpaqueNet i o
+        -> Put
+putONet (ONet net) = do
+    put (hiddenStruct net)
+    putNet net
+
+
+getONet :: forall i o. (KnownNat i, KnownNat o)
+        => Get (OpaqueNet i o)
+getONet = do
+            hs <- BinLib.get
+            withSomeSing hs $ \ss -> do 
+                                      (net :: Network i hs o) <- getNet ss
+                                      case Proxy @hs of 
+                                        (Proxy :: Proxy (z :: (SingI z)=> Sing z)) -> undefined
+                                        --ONet <$> getNet ss -- <$> go ss
+                                          
+
+                                        
 
 -- Functions definitions to serialize and desserialize the Network
 
@@ -477,20 +518,6 @@ checkAccuracy xs = 100 * Prelude.foldr checkAc 0 xs / fromIntegral(length xs)
                       where
 
                         checkAc (_, expO, netO) acc = if VecSized.toList (SA.rVec expO) == VecSized.toList (SA.rVec netO) then acc + 1 else acc
-
-
-
-
-
--- Definition of functions to run and train a opaque net
-
-{-
-opaqueNetTrain :: (MonadRandom m, MonadIO m, KnownNat i, KnownNat o) =>  OpaqueNet i o -> Double -> Int -> [[Double]] -> (Int, Int) -> m (OpaqueNet i o, [(SA.R i, SA.R 0, SA.R o)], OpaqueNet i o, [(SA.R i, SA.R o, SA.R o)])
-opaqueNetTrain on learningrate nruns samples (inputD, outputD) = case on of
-                                                                    ONet (net :: Network i (hs :: [Nat]) o) -> do
-                                                                                                  (initnet, outMatInit, trained, outMat) <- netTrain net learningrate nruns samples (inputD, outputD)
-                                                                                                  return (ONet initnet, outMatInit, ONet trained, outMat)
--}
 
 
 
