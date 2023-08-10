@@ -11,6 +11,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE TypeApplications #-}
 
 
 
@@ -39,16 +40,15 @@ import Data.Singletons
 --import Prelude.Singletons
 import Data.List.Singletons ( SList(SCons, SNil))
 import qualified Numeric.LinearAlgebra.Static.Vector as SA
-import Data.Vector.Storable.Sized as VecSized (toList, map, foldr)
+import Data.Vector.Storable.Sized as VecSized (toList, map, foldr, _head, withSizedList)
 import Data.Binary as BinLib
 import qualified Data.ByteString.Lazy as BSL
 import Data.List (foldl')
 import System.Random.Shuffle (shuffle')
 import GHC.Natural (Natural)
 import GHC.TypeNats
-import GHC.ExecutionStack (Location(Location))
 
-
+import Type.Reflection
 
 
 
@@ -63,7 +63,7 @@ data Weights i o = W { wBiases  :: !(SA.R o)
 
 instance (KnownNat i, KnownNat o) => Eq (Weights i o) where
   (==) :: Weights i o -> Weights i o -> Bool
-  (==) (W b n) (W b2 n2) = (SA.rVec b == SA.rVec b2) && (SA.lVec n == SA.lVec n2)
+  (==) (W b n) (W b2 n2) = SA.rVec b == SA.rVec b2 && SA.lVec n == SA.lVec n2
 
 instance (KnownNat i, KnownNat o) => Binary (Weights i o)
 
@@ -118,6 +118,11 @@ instance (KnownNat i, KnownNat o) => Show (OpaqueNet i o) where
   show :: OpaqueNet i o -> String
   show (ONet x) = "Existencial Network: {\n" ++ show x ++ "\n}\n"
 
+
+instance (KnownNat i, KnownNat o) => Eq (OpaqueNet i o) where
+  (==) :: (KnownNat i, KnownNat o) => OpaqueNet i o -> OpaqueNet i o -> Bool
+  (==) (ONet (x :: Network i is io)) (ONet (y :: Network i js io)) = undefined 
+
 -- Definition of instance to serialize a Network and the put/get functions:
 
 
@@ -127,9 +132,8 @@ putNet :: (KnownNat i, KnownNat o)
 putNet = \case
             O     w f   -> put (w, f)
             (:&~) w f n -> put (w, f) *> putNet n
-
-getNet :: forall i hs o. (KnownNat i, KnownNat o, SingI hs) => Get (Network i hs o)
-getNet = go sing
+getNet2 :: forall i hs o. (KnownNat i, KnownNat o, SingI hs) => Get (Network i hs o)
+getNet2 = go sing
   where
     go :: forall j js. (KnownNat j) => Sing js -> Get (Network j js o)
     go sizes = case sizes of
@@ -141,12 +145,20 @@ getNet = go sing
                                         (weights, activation) <- BinLib.get
                                         (:&~) weights activation <$> go ss
 
-
+getNet :: forall i hs o. (KnownNat i, KnownNat o)
+       => Sing hs
+       -> Get (Network i hs o)
+getNet = \case
+    SNil            -> do
+                        (weights, activation) <- BinLib.get
+                        return (O weights activation)
+    SNat `SCons` ss -> do
+                        (weights, activation) <- BinLib.get
+                        (:&~) weights activation <$> getNet ss
 
 instance (KnownNat i, SingI hs, KnownNat o) => Binary (Network i hs o) where
   put = putNet
-  get = getNet
-
+  get = getNet sing -- tirar o sing caso ir para o getnet antigo
 
 
 -- Functions definitions to serialize and desserialize the Network
@@ -158,6 +170,96 @@ serializeNetwork = encode
 -- Deserialize a Network from a ByteString
 deserializeNetwork :: (KnownNat i, SingI hs, KnownNat o) => BSL.ByteString -> Network i hs o
 deserializeNetwork = decode
+
+
+
+-- Definition of instance to serialize a OpaqueNet and the put/get functions:
+
+hiddenStruct :: Network i hs o -> [Natural]
+hiddenStruct = \case
+    O _  _  -> []
+    (:&~) _ _  (n' :: Network h hs' o)
+           -> natVal (Proxy @h)
+            : hiddenStruct n'
+
+
+putONet :: (KnownNat i, KnownNat o)
+        => OpaqueNet i o
+        -> Put
+putONet (ONet net) = do
+    put (hiddenStruct net)
+    putNet net
+
+
+
+{-
+
+randomONet :: forall m i o. (MonadRandom m, KnownNat i, KnownNat o)
+              => [Activation] -> [Natural]
+                -> m (OpaqueNet i o)
+randomONet fs = \case
+  [] -> do
+        net :: Network i '[] o <- randomNet fs
+        return (ONet net)
+  
+  x:xs -> case someNatVal x of  --ONet <$> randomNet' fs hs
+            SomeNat (_ :: Proxy n) -> do 
+                                        let camada :: m(Weights i n) = randomWeights 
+                                        (ONet (recnet :: Network n hs o)) <- randomONet (tail fs) xs
+                                        finalnet <- (:&~) <$> camada <*> pure (getAct fs) <*> pure recnet
+                                        return (ONet finalnet)
+
+
+-}
+
+getONet :: forall i o. (KnownNat i, KnownNat o)
+          => Get (OpaqueNet i o)
+getONet = do
+            hs :: [Natural]  <- BinLib.get
+            recFormNet hs
+            
+                        where
+                          getWghtsAndActs :: (KnownNat j, KnownNat jo) => Natural -> Get(Weights j jo, Activation)
+                          getWghtsAndActs nat = 
+                                  case someNatVal nat of 
+                                    SomeNat (_ :: Proxy n) -> do
+                                                                camada :: Weights j jo <- BinLib.get
+                                                                act :: Activation <- BinLib.get
+                                                                return (camada, act)
+                          recFormNet :: forall z zo. (KnownNat z, KnownNat zo) => [Natural] -> Get (OpaqueNet z zo)
+                          recFormNet nats = 
+                                case nats of
+                                  []    -> do
+                                            c :: Weights z zo <- BinLib.get
+                                            a :: Activation <- BinLib.get
+                                            return (ONet (O c a))
+                                  y:ys  -> 
+                                    case someNatVal y of
+                                      SomeNat (_ :: Proxy n) -> 
+                                              do
+                                                (c,a) :: (Weights z n, Activation) <- getWghtsAndActs y
+                                                (ONet nrec) :: OpaqueNet n  zo <- recFormNet ys
+                                                return (ONet $ (:&~) c a nrec)
+                                                
+                    
+
+
+
+instance (KnownNat i, KnownNat o) => Binary (OpaqueNet i o) where
+    put = putONet
+    get = getONet
+
+
+
+-- Functions definitions to serialize and desserialize the OpaqueNetwork
+
+-- Serialize a Network to a ByteString
+serializeOpaqueNet :: (KnownNat i, KnownNat o) => OpaqueNet i o -> BSL.ByteString
+serializeOpaqueNet = encode
+
+-- Deserialize a Network from a ByteString
+deserializeOpaqueNet :: (KnownNat i, KnownNat o) => BSL.ByteString -> OpaqueNet i o
+deserializeOpaqueNet = decode
 
 
 
@@ -346,10 +448,10 @@ randomONet fs = \case
   [] -> do
         net :: Network i '[] o <- randomNet fs
         return (ONet net)
-  
+
   x:xs -> case someNatVal x of  --ONet <$> randomNet' fs hs
-            SomeNat (_ :: Proxy n) -> do 
-                                        let camada :: m(Weights i n) = randomWeights 
+            SomeNat (_ :: Proxy n) -> do
+                                        let camada :: m(Weights i n) = randomWeights
                                         (ONet (recnet :: Network n hs o)) <- randomONet (tail fs) xs
                                         finalnet <- (:&~) <$> camada <*> pure (getAct fs) <*> pure recnet
                                         return (ONet finalnet)
@@ -526,20 +628,32 @@ main = do
     putStrLn "Teste do readLn hs, digite:"
 
     hs  <- readLn
-      
+    putStrLn "Imprimindo OpaqueNet Random:"
     xNet :: OpaqueNet 2 1 <- randomONet [Logistic,Logistic,Logistic,Linear] hs
     print xNet
 
-    case xNet of 
+    putStrLn "Escrevendo OpaqueNet...." 
+    BSL.writeFile "testONet.tsnn" $ encode xNet
+
+    putStrLn "Lendo OpaqueNet...."
+    byteStringONet <- BSL.readFile "testONet.tsnn"
+    let fileONet :: OpaqueNet 2 1 = deserializeOpaqueNet byteStringONet
+    putStrLn "Imprimindo OpaqueNet Random carregada do arquivo:"
+    print fileONet
+
+    
+    --_ :: Maybe String <- readLn
+
+    case xNet of
       ONet (net' :: Network 2 hs 1 ) -> do
                     (_, _, _, outputS) <- netTrain net' (fromMaybe 0.0025   rate) (fromMaybe 1000 n) (take 100 samples) dimensions
                     putStrLn $ renderOutput outputS
 
-    
-    
+
+
     print "teste do hs acima\n\n"
 
-    _ :: Maybe String <- readLn
+    --_ :: Maybe String <- readLn
 
     print hs
 
@@ -555,9 +669,9 @@ main = do
                           (_, _, _, outputS) <- netTrain net (fromMaybe 0.0025   rate) (fromMaybe 1000 n) (take 100 samples) dimensions
                           putStrLn $ renderOutput outputS
 
-    print "\n\n"
+    putStrLn "\n\n"
 
-    qqr :: Maybe String <- readLn
+    --qqr :: Maybe String <- readLn
 
     initialNet  :: Network 2 '[5] 1    <- randomNet [Logistic, Linear]
 
