@@ -12,6 +12,8 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeFamilies #-}
 
 
 
@@ -40,15 +42,19 @@ import Data.Singletons
 --import Prelude.Singletons
 import Data.List.Singletons ( SList(SCons, SNil))
 import qualified Numeric.LinearAlgebra.Static.Vector as SA
-import Data.Vector.Storable.Sized as VecSized (toList, map, foldr, _head, withSizedList)
+import Data.Vector.Storable.Sized as VecSized (toList, map, foldr)
 import Data.Binary as BinLib
 import qualified Data.ByteString.Lazy as BSL
 import Data.List (foldl')
 import System.Random.Shuffle (shuffle')
 import GHC.Natural (Natural)
 import GHC.TypeNats
+import Data.Type.Equality ((:~:) (Refl))
 
-import Type.Reflection
+
+
+
+
 
 
 
@@ -59,6 +65,20 @@ data Weights i o = W { wBiases  :: !(SA.R o)
                      , wNodes   :: !(SA.L o i)
                       }
                   deriving (Show, Generic)
+
+{-
+proofInput :: forall i hs o n. (KnownNat i, KnownNat o, KnownNat n) =>
+          Network i hs o -> Proxy n -> Maybe (i :~: n)
+proofInput _ = sameNat (Proxy @i)
+
+proofOutput :: forall i hs o n. (KnownNat i, KnownNat o, KnownNat n) =>
+          Network i hs o -> Proxy n -> Maybe (o :~: n)
+proofOutput _ = sameNat (Proxy @o)
+-}
+
+proofSize :: forall i n. (KnownNat i, KnownNat n) =>
+          Proxy i -> Proxy n -> Maybe (i :~: n)
+proofSize _ = sameNat (Proxy @i)
 
 
 instance (KnownNat i, KnownNat o) => Eq (Weights i o) where
@@ -103,8 +123,35 @@ instance (KnownNat i, KnownNat o) => Show (Network i hs o) where
   show ((:&~) a f b)    =  "Input/Layer neurons: "   ++ show (wNodes a) ++ ", Weights: " ++ show (wBiases a) ++ ", Activation Function: " ++ show f ++ "\n" ++ show b
 
 
+proofSameLayers :: forall i0 hs0 o0 i1 hs1 o1.
+                   Network i0 hs0 o0 -> Network i1 hs1 o1 -> Maybe (hs0 :~: hs1)
+proofSameLayers n0 n1 =
+  case n0 of
+    O{} -> case n1 of
+        (:&~){} -> Nothing -- hs0 é [] e hs1 não é
+        O{}     -> Just Refl -- hs0 e hs1 são []
+    (:&~) _ _ n0' -> case n1 of
+        O{}     -> Nothing -- hs1 é [] mas hs0 não
+        (:&~) _ _ n1' -> -- aqui nem hs0 nem hs1 são vazios
+          let p0 = Proxy @(Head hs0)
+              p1 = Proxy @(Head hs1) in
+              case sameNat p0 p1 of
+                Nothing   -> Nothing
+                Just Refl -> -- aqui a cabeça é igual, falta a cauda
+                  case proofSameLayers n0' n1' of
+                    Nothing -> Nothing
+                    Just Refl -> -- aqui temos a prova que as caudas são iguais
+                                 -- tb sabemos a cabeça é igual
+                      Just Refl
+
+{-(==) (O w f)       (O w2 f2)        = 
+    case proofSameLayers (O w f) (O w2 f2) of 
+      Nothing -> False
+      Just x0 -> w == w2 && f == f2
+  (==) ((:&~) w f n) ((:&~) w2 f2 n2) = w == w2 && f == f2 && n == n2-}
 instance (KnownNat i, KnownNat o) => Eq (Network i hs o) where
-  (==) (O w f)       (O w2 f2)        = w == w2 && f == f2
+  (==) :: Network i hs o -> Network i hs o -> Bool
+  (==) (O w f) (O w2 f2) = w == w2 && f == f2
   (==) ((:&~) w f n) ((:&~) w2 f2 n2) = w == w2 && f == f2 && n == n2
 
 
@@ -114,14 +161,48 @@ data OpaqueNet :: Nat -> Nat -> Type where
   ONet :: (KnownNat i, SingI hs, KnownNat o) => Network i hs o -> OpaqueNet i o
 
 -- Show instance definition to visualize the Network
+
 instance (KnownNat i, KnownNat o) => Show (OpaqueNet i o) where
   show :: OpaqueNet i o -> String
   show (ONet x) = "Existencial Network: {\n" ++ show x ++ "\n}\n"
 
 
+
+-- Eq instance definition to compare OpaqueNets
+
+type Head :: [Nat] -> Nat
+type family Head xs where
+  Head (x:xs) = x
+
+
+comparaOpaque :: forall i0 o0 i1 o1. OpaqueNet i0 o0 -> OpaqueNet i1 o1 -> Maybe (OpaqueNet i0 o0 :~: OpaqueNet i1 o1)
+comparaOpaque on0 on1 =
+  case on0 of
+    ONet n0 ->
+      case on1 of
+        ONet n1 ->
+          case sameNat (Proxy @i0) (Proxy @i1) of
+            Nothing   -> Nothing
+            Just Refl ->
+              case sameNat (Proxy @o0) (Proxy @o1) of
+                Nothing   -> Nothing
+                Just Refl -> -- ****
+                  case proofSameLayers n0 n1 of
+                    Nothing -> Nothing
+                    Just Refl -> Just Refl
+
+-- ****: nesse ponto os tipos já estão satisfeitos e eu poderia devolver o Just Refl
+-- o seu OpaqueNet usa basicamente a ideia de um tipo existencial
+-- mas vc tb quer testar internamente, então continuamos
+
 instance (KnownNat i, KnownNat o) => Eq (OpaqueNet i o) where
-  (==) :: (KnownNat i, KnownNat o) => OpaqueNet i o -> OpaqueNet i o -> Bool
-  (==) (ONet (x :: Network i is io)) (ONet (y :: Network i js io)) = undefined 
+  (==) :: OpaqueNet i o -> OpaqueNet i o -> Bool
+  (==) (ONet na) (ONet nb) =
+    case proofSameLayers na nb of
+      Nothing -> False
+      Just Refl -> na == nb
+
+
 
 -- Definition of instance to serialize a Network and the put/get functions:
 
@@ -192,56 +273,36 @@ putONet (ONet net) = do
 
 
 
-{-
-
-randomONet :: forall m i o. (MonadRandom m, KnownNat i, KnownNat o)
-              => [Activation] -> [Natural]
-                -> m (OpaqueNet i o)
-randomONet fs = \case
-  [] -> do
-        net :: Network i '[] o <- randomNet fs
-        return (ONet net)
-  
-  x:xs -> case someNatVal x of  --ONet <$> randomNet' fs hs
-            SomeNat (_ :: Proxy n) -> do 
-                                        let camada :: m(Weights i n) = randomWeights 
-                                        (ONet (recnet :: Network n hs o)) <- randomONet (tail fs) xs
-                                        finalnet <- (:&~) <$> camada <*> pure (getAct fs) <*> pure recnet
-                                        return (ONet finalnet)
-
-
--}
-
 getONet :: forall i o. (KnownNat i, KnownNat o)
           => Get (OpaqueNet i o)
 getONet = do
             hs :: [Natural]  <- BinLib.get
             recFormNet hs
-            
+
                         where
                           getWghtsAndActs :: (KnownNat j, KnownNat jo) => Natural -> Get(Weights j jo, Activation)
-                          getWghtsAndActs nat = 
-                                  case someNatVal nat of 
+                          getWghtsAndActs nat =
+                                  case someNatVal nat of
                                     SomeNat (_ :: Proxy n) -> do
                                                                 camada :: Weights j jo <- BinLib.get
                                                                 act :: Activation <- BinLib.get
                                                                 return (camada, act)
                           recFormNet :: forall z zo. (KnownNat z, KnownNat zo) => [Natural] -> Get (OpaqueNet z zo)
-                          recFormNet nats = 
+                          recFormNet nats =
                                 case nats of
                                   []    -> do
                                             c :: Weights z zo <- BinLib.get
                                             a :: Activation <- BinLib.get
                                             return (ONet (O c a))
-                                  y:ys  -> 
+                                  y:ys  ->
                                     case someNatVal y of
-                                      SomeNat (_ :: Proxy n) -> 
+                                      SomeNat (_ :: Proxy n) ->
                                               do
                                                 (c,a) :: (Weights z n, Activation) <- getWghtsAndActs y
                                                 (ONet nrec) :: OpaqueNet n  zo <- recFormNet ys
                                                 return (ONet $ (:&~) c a nrec)
-                                                
-                    
+
+
 
 
 
@@ -514,7 +575,7 @@ lastN n xs = drop (length xs - n) xs
 
 
 -- Function to train the Network, based on a learning rate, number of iterations, a list of samples and the samples dimensions
-netTrain :: (MonadRandom m, MonadIO m, KnownNat i, KnownNat o, SingI hs) =>  Network i hs o -> Double -> Int -> [[Double]] -> (Int, Int) -> m (Network i hs o, [(SA.R i, SA.R 0, SA.R o)], Network i hs o, [(SA.R i, SA.R o, SA.R o)])
+netTrain :: (MonadRandom m, MonadIO m, KnownNat i, KnownNat o) =>  Network i hs o -> Double -> Int -> [[Double]] -> (Int, Int) -> m (Network i hs o, [(SA.R i, SA.R 0, SA.R o)], Network i hs o, [(SA.R i, SA.R o, SA.R o)])
 netTrain initnet learningrate nruns samples (inputD, outputD) = do
 
     let inps = Prelude.map (SA.vector . take inputD) samples
@@ -628,11 +689,19 @@ main = do
     putStrLn "Teste do readLn hs, digite:"
 
     hs  <- readLn
-    putStrLn "Imprimindo OpaqueNet Random:"
+    putStrLn "hs lido: "
+    print hs
+
+
     xNet :: OpaqueNet 2 1 <- randomONet [Logistic,Logistic,Logistic,Linear] hs
+    xNet2 :: OpaqueNet 2 1 <- randomONet [Logistic,Logistic,Logistic,Linear] hs
+
+    putStrLn $ "xNet == xNet2 : " ++ show (xNet == xNet2)
+
+    putStrLn "Imprimindo OpaqueNet Random:"
     print xNet
 
-    putStrLn "Escrevendo OpaqueNet...." 
+    putStrLn "Escrevendo OpaqueNet...."
     BSL.writeFile "testONet.tsnn" $ encode xNet
 
     putStrLn "Lendo OpaqueNet...."
@@ -641,7 +710,12 @@ main = do
     putStrLn "Imprimindo OpaqueNet Random carregada do arquivo:"
     print fileONet
 
-    
+    putStrLn $ "xNet == fileONet : " ++ show (xNet == fileONet)
+
+    if xNet == fileONet then 
+      putStrLn "Verificacao concluida, a rede neural gravada eh igua a original." 
+      else putStrLn "Erro, serializacao com problemas, a rede gravada nao eh igual a rede original!!"
+
     --_ :: Maybe String <- readLn
 
     case xNet of
@@ -655,19 +729,7 @@ main = do
 
     --_ :: Maybe String <- readLn
 
-    print hs
 
-    --rn3 :: OpaqueNet 2 1 <- randomONet hs [Linear]
-    testNet :: Network 2 '[5] 1    <- randomNet [Logistic, Linear]
-    let rn :: OpaqueNet 2 1 = ONet testNet
-
-    print rn
-
-    case rn of
-      ONet (net :: Network i is o) -> do
-                          print net
-                          (_, _, _, outputS) <- netTrain net (fromMaybe 0.0025   rate) (fromMaybe 1000 n) (take 100 samples) dimensions
-                          putStrLn $ renderOutput outputS
 
     putStrLn "\n\n"
 
