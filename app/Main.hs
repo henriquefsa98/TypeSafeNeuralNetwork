@@ -1,16 +1,11 @@
 {-# LANGUAGE BangPatterns        #-}
-{-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# OPTIONS_GHC -Wno-missing-export-lists #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -674,7 +669,7 @@ main = do
     args <- getArgs
     let n    :: Maybe Int    = readMaybe =<< (args !!? 0)
         rate :: Maybe Double = readMaybe =<< (args !!? 1)
-    samplesFile <- readFile "/home/kali/Downloads/UFABC/PGC/Github/TypeSafeNeuralNetwork/inputs/inputs30K.txt"
+    samplesFile <- readFile "/home/kali/Downloads/PGC/TypeSafeNeuralNetwork/inputs/inputs30K.txt"
 
     -- Read input file to get all samples to train the neural network!
     let samples = stringToSamples samplesFile
