@@ -50,10 +50,6 @@ import Data.Type.Equality ((:~:) (Refl))
 
 
 
-
-
-
-
 -- Definition of Weights, a representation of a Layer of Neurons in the Neural Network
 
 data Weights i o = W { wBiases  :: !(SA.R o)
@@ -61,19 +57,6 @@ data Weights i o = W { wBiases  :: !(SA.R o)
                       }
                   deriving (Show, Generic)
 
-{-
-proofInput :: forall i hs o n. (KnownNat i, KnownNat o, KnownNat n) =>
-          Network i hs o -> Proxy n -> Maybe (i :~: n)
-proofInput _ = sameNat (Proxy @i)
-
-proofOutput :: forall i hs o n. (KnownNat i, KnownNat o, KnownNat n) =>
-          Network i hs o -> Proxy n -> Maybe (o :~: n)
-proofOutput _ = sameNat (Proxy @o)
--}
-
-proofSize :: forall i n. (KnownNat i, KnownNat n) =>
-          Proxy i -> Proxy n -> Maybe (i :~: n)
-proofSize _ = sameNat (Proxy @i)
 
 
 instance (KnownNat i, KnownNat o) => Eq (Weights i o) where
@@ -135,15 +118,10 @@ proofSameLayers n0 n1 =
                 Just Refl -> -- aqui a cabeça é igual, falta a cauda
                   case proofSameLayers n0' n1' of
                     Nothing -> Nothing
-                    Just Refl -> -- aqui temos a prova que as caudas são iguais
-                                 -- tb sabemos a cabeça é igual
+                    Just Refl ->      
                       Just Refl
 
-{-(==) (O w f)       (O w2 f2)        = 
-    case proofSameLayers (O w f) (O w2 f2) of 
-      Nothing -> False
-      Just x0 -> w == w2 && f == f2
-  (==) ((:&~) w f n) ((:&~) w2 f2 n2) = w == w2 && f == f2 && n == n2-}
+
 instance (KnownNat i, KnownNat o) => Eq (Network i hs o) where
   (==) :: Network i hs o -> Network i hs o -> Bool
   (==) (O w f) (O w2 f2) = w == w2 && f == f2
@@ -170,25 +148,6 @@ type family Head xs where
   Head (x:xs) = x
 
 
-comparaOpaque :: forall i0 o0 i1 o1. OpaqueNet i0 o0 -> OpaqueNet i1 o1 -> Maybe (OpaqueNet i0 o0 :~: OpaqueNet i1 o1)
-comparaOpaque on0 on1 =
-  case on0 of
-    ONet n0 ->
-      case on1 of
-        ONet n1 ->
-          case sameNat (Proxy @i0) (Proxy @i1) of
-            Nothing   -> Nothing
-            Just Refl ->
-              case sameNat (Proxy @o0) (Proxy @o1) of
-                Nothing   -> Nothing
-                Just Refl -> -- ****
-                  case proofSameLayers n0 n1 of
-                    Nothing -> Nothing
-                    Just Refl -> Just Refl
-
--- ****: nesse ponto os tipos já estão satisfeitos e eu poderia devolver o Just Refl
--- o seu OpaqueNet usa basicamente a ideia de um tipo existencial
--- mas vc tb quer testar internamente, então continuamos
 
 instance (KnownNat i, KnownNat o) => Eq (OpaqueNet i o) where
   (==) :: OpaqueNet i o -> OpaqueNet i o -> Bool
@@ -462,23 +421,6 @@ getAct (a:_)  = a
 getAct []     = Linear
 
 
-{- 
--- Generate a Network with random Weights, based on input, hidden layers and output types, and a list of Activations
-randomNet :: forall m i hs o. (MonadRandom m, KnownNat i, SingI hs, KnownNat o)
-          => [Activation]
-          -> m (Network i hs o)
-randomNet  hiddenActivations = go hiddenActivations sing
-  where
-    go :: forall h  hs'. (KnownNat h)
-       => [Activation]
-       ->  Sing hs'
-       -> m (Network h  hs' o)
-
-    go actL sizes  = case sizes of
-                        SNil           -> O     <$> randomWeights <*> pure (getAct actL)
-                        SCons SNat ss  -> (:&~) <$> randomWeights <*> pure (getAct actL) <*> go (tail actL) ss
--}
-
 
 randomNet' :: forall m i hs o. (MonadRandom m, KnownNat i, KnownNat o)
            => [Activation] -> Sing hs -> m (Network i hs o)
@@ -580,13 +522,11 @@ netTrain initnet learningrate nruns samples (inputD, outputD) = do
 
     let trained = trainNTimes initnet (inps, outs) nruns
           where
-            --trainNTimes :: (KnownNat i, SingI hs, KnownNat o) => Network i hs o -> ([SA.R i], [SA.R o]) -> Int -> Network i hs o
             trainNTimes net (i, o) n2
                 | n2 <= 0 = net
                 | otherwise = trainNTimes (foldl' trainEach net (zip i o)) shuffledSamples (n2 - 1)  -- Shuffle the samples at every iteration of training
                         where
                             --trainEach :: (KnownNat i, KnownNat o) => Network i hs o -> (SA.R i, SA.R o) -> Network i hs o
-                            --trainEach nt (i2, o2) = nt
                             trainEach nt (i2, o2) = train learningrate i2 o2 nt
 
                             zippedSamples = zip i o
@@ -640,18 +580,6 @@ checkAccuracy xs = 100 * Prelude.foldr checkAc 0 xs / fromIntegral(length xs)
 
 
 
--- Definition of functions to run and train a opaque net
-
-{-
-opaqueNetTrain :: (MonadRandom m, MonadIO m, KnownNat i, KnownNat o) =>  OpaqueNet i o -> Double -> Int -> [[Double]] -> (Int, Int) -> m (OpaqueNet i o, [(SA.R i, SA.R 0, SA.R o)], OpaqueNet i o, [(SA.R i, SA.R o, SA.R o)])
-opaqueNetTrain on learningrate nruns samples (inputD, outputD) = case on of
-                                                                    ONet (net :: Network i (hs :: [Nat]) o) -> do
-                                                                                                  (initnet, outMatInit, trained, outMat) <- netTrain net learningrate nruns samples (inputD, outputD)
-                                                                                                  return (ONet initnet, outMatInit, ONet trained, outMat)
--}
-
-
-
 -- Auxiliar function to read samples from a String
 stringToSamples :: String -> [[Double]]
 stringToSamples x = Prelude.map (Prelude.map readSamples . words) (lines x)
@@ -688,7 +616,7 @@ main = do
     print hs
 
 
-    xNet :: OpaqueNet 2 1 <- randomONet [Logistic,Logistic,Logistic,Linear] hs
+    xNet :: OpaqueNet 2 1 <- randomONet [Logistic,Linear] hs
     xNet2 :: OpaqueNet 2 1 <- randomONet [Logistic,Logistic,Logistic,Linear] hs
 
     putStrLn $ "xNet == xNet2 : " ++ show (xNet == xNet2)
@@ -711,69 +639,22 @@ main = do
       putStrLn "Verificacao concluida, a rede neural gravada eh igua a original." 
       else putStrLn "Erro, serializacao com problemas, a rede gravada nao eh igual a rede original!!"
 
-    --_ :: Maybe String <- readLn
-
     case xNet of
       ONet (net' :: Network 2 hs 1 ) -> do
-                    (_, _, _, outputS) <- netTrain net' (fromMaybe 0.0025   rate) (fromMaybe 1000 n) (take 100 samples) dimensions
+                    (_, _, outONet, outputS) <- netTrain net' (fromMaybe 0.0025   rate) (fromMaybe 10000 n) (take 100 samples) dimensions
                     putStrLn $ renderOutput outputS
+                    putStrLn "Modelo Final:"
+                    print outONet
+                    putStrLn "Medindo acuracia do modelo treinado:"
+                    let filteredResults = runNetFiltered outONet (take 200 samples) dimensions BinaryOutput
+                    putStrLn $ "\n-------> Accuracy: " ++ show (checkAccuracy filteredResults) ++ " % <------"
+                    putStrLn $ renderOutput filteredResults
+                    putStrLn "\n\nSalvando o modelo treinado..."
+                    BSL.writeFile "ONetTrained.tsnn" $ encode xNet
+                    putStrLn "Modelo salvo com sucesso! Arquivo gerado: ONetTrained.tsnn"
 
 
-
-    print "teste do hs acima\n\n"
-
-    --_ :: Maybe String <- readLn
-
-
-
-    putStrLn "\n\n"
-
-    --qqr :: Maybe String <- readLn
-
-    initialNet  :: Network 2 '[5] 1    <- randomNet [Logistic, Linear]
-
-    initialNet2 :: Network 2 '[5] 1    <- randomNet [Logistic, Linear]
-
-    putStrLn $ "initialNet e initialNet2 Eq check? R: " ++ show ( initialNet == initialNet2)
-    putStrLn $ "initialNet e initialNet Eq check? R: "  ++ show ( initialNet == initialNet)
-
-
-
-    putStrLn "Showing initial Network, before training:\n\n"
-    putStrLn "\n\ninitialNet:\n"
-    print initialNet
-
-    putStrLn "\n\nTraining network..."
-
-    (_, _, netTrained, outputS) <- netTrain initialNet
-                                  (fromMaybe 0.0025   rate)
-                                  (fromMaybe 10000 n   )
-                                  (take 100 samples)
-                                   dimensions
-
-    putStrLn $ "Are initialNet e netTrained equals? R: " ++ show ( initialNet == netTrained)
-
-    putStrLn "\n\nNetwork after training: \n\n"
-    print netTrained
-
-    putStrLn "\n\n\nShowing network prediction of:\n"
-    putStrLn $ "\n-------> Accuracy: " ++ show (checkAccuracy outputS) ++ " % <------"
-    putStrLn $ renderOutput outputS
-    putStrLn "\n\n\nShowing network filtered prediction, with BinaryOutput NetFilter applied:\n"
-    let filteredResults = runNetFiltered netTrained (take 200 samples) dimensions BinaryOutput
-    putStrLn $ "\n-------> Accuracy: " ++ show (checkAccuracy filteredResults) ++ " % <------"
-    putStrLn $ renderOutput filteredResults
-
-
-
-    putStrLn "\n\nWriting the trained Network in the file: trainedNet.tsnn ...."
-    BSL.writeFile "trainedNet.tsnn" $ encode netTrained
-    putStrLn "\nLoading the Network from file trainedNet.tsnn, printing it:"
-    byteStringNet <- BSL.readFile "trainedNet.tsnn"
-    let fileTrainedNet :: Network 2 '[5] 1 = deserializeNetwork byteStringNet
-    print fileTrainedNet
-    putStrLn $ "Are netTrained and fileTrainedNet equals? R: " ++ show ( netTrained == fileTrainedNet)
-    putStrLn "\nNetwork succesfuly saved, shuting down the execution!"
+    
 
 (!!?) :: [a] -> Int -> Maybe a
 xs !!? i = listToMaybe (drop i xs)
