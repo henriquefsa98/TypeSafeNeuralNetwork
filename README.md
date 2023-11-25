@@ -44,10 +44,10 @@ To use this library, you need to have GHC (Glasgow Haskell Compiler) and Cabal i
 
 To use the neural network implemented in this code, follow these steps:
 
-1. Define the architecture of your neural network using the provided types, a list of Activations and the randomNet function. For example:
+1. Define the architecture of your neural network passing a list of Activations, a list os Naturals representing the hidden layers and the randomONet function. For example:
 
  ```haskell
- networkExample :: Network 2 '[3, 2] 1 <- randomNet [Logistic, ReLu, Linear]
+ networkExample :: OpaqueNet 2 1 <- randomONet [Logistic, ReLu, Linear] hs
  ```
 
 
@@ -259,10 +259,10 @@ guidelines for the type-safe implementation.
  getAct []     = Linear
  ```
  
- - Implement a existential wrapper for Network, to be able to create, save and load networks without the need of specifying the sizes at type level, by creating Binary instances, 
+ - Implement a fully existential wrapper for Network, not just the hidden layers as implemented here, to be able to create, save and load networks without the need of specifying the sizes at type level, by creating Binary instances, 
  put/get methods and constructors.
 
- - Implement the existential equivalent functions to be able to run the Existential Network.
+ - Implementing support to using GPU acceleration. 
 
 
 

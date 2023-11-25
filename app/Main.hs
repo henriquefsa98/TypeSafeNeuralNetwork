@@ -1,16 +1,15 @@
 {-# LANGUAGE BangPatterns        #-}
-{-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# OPTIONS_GHC -Wno-missing-export-lists #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeFamilies #-}
+
 
 
 module Main where
@@ -35,13 +34,18 @@ import Numeric.LinearAlgebra as NonStatic
 import qualified Numeric.LinearAlgebra.Static as SA
 
 import Data.Singletons
-import Data.List.Singletons
+--import Prelude.Singletons
+import Data.List.Singletons ( SList(SCons, SNil))
 import qualified Numeric.LinearAlgebra.Static.Vector as SA
 import Data.Vector.Storable.Sized as VecSized (toList, map, foldr)
 import Data.Binary as BinLib
 import qualified Data.ByteString.Lazy as BSL
 import Data.List (foldl')
 import System.Random.Shuffle (shuffle')
+import GHC.Natural (Natural)
+import GHC.TypeNats
+import Data.Type.Equality ((:~:) (Refl))
+
 
 
 
@@ -54,9 +58,10 @@ data Weights i o = W { wBiases  :: !(SA.R o)
                   deriving (Show, Generic)
 
 
+
 instance (KnownNat i, KnownNat o) => Eq (Weights i o) where
   (==) :: Weights i o -> Weights i o -> Bool
-  (==) (W b n) (W b2 n2) = (SA.rVec b == SA.rVec b2) && (SA.lVec n == SA.lVec n2)
+  (==) (W b n) (W b2 n2) = SA.rVec b == SA.rVec b2 && SA.lVec n == SA.lVec n2
 
 instance (KnownNat i, KnownNat o) => Binary (Weights i o)
 
@@ -80,9 +85,9 @@ getFunctions f = case f of
 
 
 data Network :: Nat -> [Nat] -> Nat -> Type where
-    O     :: !(Weights i o) -> Activation
+    O     :: (KnownNat i, KnownNat o) => !(Weights i o) -> Activation
           -> Network i '[] o
-    (:&~) :: (KnownNat h) => Weights i h -> Activation
+    (:&~) :: (KnownNat h, KnownNat i, KnownNat o) => Weights i h -> Activation
           -> !(Network h hs o)
           -> Network i (h ': hs)  o
 
@@ -96,10 +101,60 @@ instance (KnownNat i, KnownNat o) => Show (Network i hs o) where
   show ((:&~) a f b)    =  "Input/Layer neurons: "   ++ show (wNodes a) ++ ", Weights: " ++ show (wBiases a) ++ ", Activation Function: " ++ show f ++ "\n" ++ show b
 
 
+proofSameLayers :: forall i0 hs0 o0 i1 hs1 o1.
+                   Network i0 hs0 o0 -> Network i1 hs1 o1 -> Maybe (hs0 :~: hs1)
+proofSameLayers n0 n1 =
+  case n0 of
+    O{} -> case n1 of
+        (:&~){} -> Nothing -- hs0 é [] e hs1 não é
+        O{}     -> Just Refl -- hs0 e hs1 são []
+    (:&~) _ _ n0' -> case n1 of
+        O{}     -> Nothing -- hs1 é [] mas hs0 não
+        (:&~) _ _ n1' -> -- aqui nem hs0 nem hs1 são vazios
+          let p0 = Proxy @(Head hs0)
+              p1 = Proxy @(Head hs1) in
+              case sameNat p0 p1 of
+                Nothing   -> Nothing
+                Just Refl -> -- aqui a cabeça é igual, falta a cauda
+                  case proofSameLayers n0' n1' of
+                    Nothing -> Nothing
+                    Just Refl ->      
+                      Just Refl
+
+
 instance (KnownNat i, KnownNat o) => Eq (Network i hs o) where
-  (==) (O w f)       (O w2 f2)        = w == w2 && f == f2
+  (==) :: Network i hs o -> Network i hs o -> Bool
+  (==) (O w f) (O w2 f2) = w == w2 && f == f2
   (==) ((:&~) w f n) ((:&~) w2 f2 n2) = w == w2 && f == f2 && n == n2
 
+
+-- Definition of existencial type for Network:
+
+data OpaqueNet :: Nat -> Nat -> Type where
+  ONet :: (KnownNat i, SingI hs, KnownNat o) => Network i hs o -> OpaqueNet i o
+
+-- Show instance definition to visualize the Network
+
+instance (KnownNat i, KnownNat o) => Show (OpaqueNet i o) where
+  show :: OpaqueNet i o -> String
+  show (ONet x) = "Existencial Network: {\n" ++ show x ++ "\n}\n"
+
+
+
+-- Eq instance definition to compare OpaqueNets
+
+type Head :: [Nat] -> Nat
+type family Head xs where
+  Head (x:xs) = x
+
+
+
+instance (KnownNat i, KnownNat o) => Eq (OpaqueNet i o) where
+  (==) :: OpaqueNet i o -> OpaqueNet i o -> Bool
+  (==) (ONet na) (ONet nb) =
+    case proofSameLayers na nb of
+      Nothing -> False
+      Just Refl -> na == nb
 
 
 
@@ -112,9 +167,8 @@ putNet :: (KnownNat i, KnownNat o)
 putNet = \case
             O     w f   -> put (w, f)
             (:&~) w f n -> put (w, f) *> putNet n
-
-getNet :: forall i hs o. (KnownNat i, KnownNat o, SingI hs) => Get (Network i hs o)
-getNet = go sing
+getNet2 :: forall i hs o. (KnownNat i, KnownNat o, SingI hs) => Get (Network i hs o)
+getNet2 = go sing
   where
     go :: forall j js. (KnownNat j) => Sing js -> Get (Network j js o)
     go sizes = case sizes of
@@ -126,12 +180,20 @@ getNet = go sing
                                         (weights, activation) <- BinLib.get
                                         (:&~) weights activation <$> go ss
 
-
+getNet :: forall i hs o. (KnownNat i, KnownNat o)
+       => Sing hs
+       -> Get (Network i hs o)
+getNet = \case
+    SNil            -> do
+                        (weights, activation) <- BinLib.get
+                        return (O weights activation)
+    SNat `SCons` ss -> do
+                        (weights, activation) <- BinLib.get
+                        (:&~) weights activation <$> getNet ss
 
 instance (KnownNat i, SingI hs, KnownNat o) => Binary (Network i hs o) where
   put = putNet
-  get = getNet
-
+  get = getNet sing -- tirar o sing caso ir para o getnet antigo
 
 
 -- Functions definitions to serialize and desserialize the Network
@@ -143,6 +205,76 @@ serializeNetwork = encode
 -- Deserialize a Network from a ByteString
 deserializeNetwork :: (KnownNat i, SingI hs, KnownNat o) => BSL.ByteString -> Network i hs o
 deserializeNetwork = decode
+
+
+
+-- Definition of instance to serialize a OpaqueNet and the put/get functions:
+
+hiddenStruct :: Network i hs o -> [Natural]
+hiddenStruct = \case
+    O _  _  -> []
+    (:&~) _ _  (n' :: Network h hs' o)
+           -> natVal (Proxy @h)
+            : hiddenStruct n'
+
+
+putONet :: (KnownNat i, KnownNat o)
+        => OpaqueNet i o
+        -> Put
+putONet (ONet net) = do
+    put (hiddenStruct net)
+    putNet net
+
+
+
+getONet :: forall i o. (KnownNat i, KnownNat o)
+          => Get (OpaqueNet i o)
+getONet = do
+            hs :: [Natural]  <- BinLib.get
+            recFormNet hs
+
+                        where
+                          getWghtsAndActs :: (KnownNat j, KnownNat jo) => Natural -> Get(Weights j jo, Activation)
+                          getWghtsAndActs nat =
+                                  case someNatVal nat of
+                                    SomeNat (_ :: Proxy n) -> do
+                                                                camada :: Weights j jo <- BinLib.get
+                                                                act :: Activation <- BinLib.get
+                                                                return (camada, act)
+                          recFormNet :: forall z zo. (KnownNat z, KnownNat zo) => [Natural] -> Get (OpaqueNet z zo)
+                          recFormNet nats =
+                                case nats of
+                                  []    -> do
+                                            c :: Weights z zo <- BinLib.get
+                                            a :: Activation <- BinLib.get
+                                            return (ONet (O c a))
+                                  y:ys  ->
+                                    case someNatVal y of
+                                      SomeNat (_ :: Proxy n) ->
+                                              do
+                                                (c,a) :: (Weights z n, Activation) <- getWghtsAndActs y
+                                                (ONet nrec) :: OpaqueNet n  zo <- recFormNet ys
+                                                return (ONet $ (:&~) c a nrec)
+
+
+
+
+
+instance (KnownNat i, KnownNat o) => Binary (OpaqueNet i o) where
+    put = putONet
+    get = getONet
+
+
+
+-- Functions definitions to serialize and desserialize the OpaqueNetwork
+
+-- Serialize a Network to a ByteString
+serializeOpaqueNet :: (KnownNat i, KnownNat o) => OpaqueNet i o -> BSL.ByteString
+serializeOpaqueNet = encode
+
+-- Deserialize a Network from a ByteString
+deserializeOpaqueNet :: (KnownNat i, KnownNat o) => BSL.ByteString -> OpaqueNet i o
+deserializeOpaqueNet = decode
 
 
 
@@ -205,7 +337,7 @@ elu' a y = SA.vecR $ VecSized.map (\x -> if x >= 0 then 1 else a + a * (exp x - 
 
 
 
--- Definiton of NetFilter, cllass of filters to the output of the neural network
+-- Definiton of NetFilter, class of filters to the output of the neural network
 
 data NetFilter = BinaryOutput | SoftMax deriving Show
 
@@ -253,6 +385,23 @@ runNet = \case
 
 
 
+-- Definitions of functions to run OpaqueNet:
+
+runOpaqueNet :: (KnownNat i, KnownNat o)
+             => OpaqueNet i o
+             -> SA.R i
+             -> SA.R o
+runOpaqueNet (ONet n) = runNet n
+
+numHiddens :: OpaqueNet i o -> Int
+numHiddens (ONet n) = go n
+  where
+    go :: Network i hs o -> Int
+    go = \case
+        O _ _        -> 0
+        (:&~) _ _ n' -> 1 + go n'
+
+
 -- Definitions of functions to generate a random network
 
 
@@ -273,22 +422,37 @@ getAct []     = Linear
 
 
 
--- Generate a Network with random Weights, based on input, hidden layers and output types, and a list of Activations
+randomNet' :: forall m i hs o. (MonadRandom m, KnownNat i, KnownNat o)
+           => [Activation] -> Sing hs -> m (Network i hs o)
+randomNet' actL = \case
+    SNil            ->     O <$> randomWeights <*> pure (getAct actL)
+    SNat `SCons` ss -> (:&~) <$> randomWeights <*> pure (getAct actL) <*> randomNet' (tail actL) ss
+
 randomNet :: forall m i hs o. (MonadRandom m, KnownNat i, SingI hs, KnownNat o)
-          => [Activation]
-          -> m (Network i hs o)
-randomNet  hiddenActivations = go hiddenActivations sing
-  where
-    go :: forall h  hs'. (KnownNat h)
-       => [Activation]
-       ->  Sing hs'
-       -> m (Network h  hs' o)
-
-    go actL sizes  = case sizes of
-                        SNil           -> O     <$> randomWeights <*> pure (getAct actL)
-                        SCons SNat ss  -> (:&~) <$> randomWeights <*> pure (getAct actL) <*> go (tail actL) ss
+          => [Activation] -> m (Network i hs o)
+randomNet actL = randomNet' actL sing
 
 
+
+
+
+-- Definitions of functions to generate a random Opaque Network
+
+
+randomONet :: forall m i o. (MonadRandom m, KnownNat i, KnownNat o)
+              => [Activation] -> [Natural]
+                -> m (OpaqueNet i o)
+randomONet fs = \case
+  [] -> do
+        net :: Network i '[] o <- randomNet fs
+        return (ONet net)
+
+  x:xs -> case someNatVal x of  --ONet <$> randomNet' fs hs
+            SomeNat (_ :: Proxy n) -> do
+                                        let camada :: m(Weights i n) = randomWeights
+                                        (ONet (recnet :: Network n hs o)) <- randomONet (tail fs) xs
+                                        finalnet <- (:&~) <$> camada <*> pure (getAct fs) <*> pure recnet
+                                        return (ONet finalnet)
 
 
 -- Training function, train the network for just one iteration on one sample
@@ -348,7 +512,7 @@ lastN n xs = drop (length xs - n) xs
 
 
 -- Function to train the Network, based on a learning rate, number of iterations, a list of samples and the samples dimensions
-netTrain :: (MonadRandom m, MonadIO m, KnownNat i, KnownNat o, SingI hs) =>  Network i hs o -> Double -> Int -> [[Double]] -> (Int, Int) -> m (Network i hs o, [(SA.R i, SA.R 0, SA.R o)], Network i hs o, [(SA.R i, SA.R o, SA.R o)])
+netTrain :: (MonadRandom m, MonadIO m, KnownNat i, KnownNat o) =>  Network i hs o -> Double -> Int -> [[Double]] -> (Int, Int) -> m (Network i hs o, [(SA.R i, SA.R 0, SA.R o)], Network i hs o, [(SA.R i, SA.R o, SA.R o)])
 netTrain initnet learningrate nruns samples (inputD, outputD) = do
 
     let inps = Prelude.map (SA.vector . take inputD) samples
@@ -358,12 +522,11 @@ netTrain initnet learningrate nruns samples (inputD, outputD) = do
 
     let trained = trainNTimes initnet (inps, outs) nruns
           where
-            trainNTimes :: (KnownNat i, SingI hs, KnownNat o) => Network i hs o -> ([SA.R i], [SA.R o]) -> Int -> Network i hs o
             trainNTimes net (i, o) n2
                 | n2 <= 0 = net
                 | otherwise = trainNTimes (foldl' trainEach net (zip i o)) shuffledSamples (n2 - 1)  -- Shuffle the samples at every iteration of training
                         where
-                            trainEach :: (KnownNat i, KnownNat o) => Network i hs o -> (SA.R i, SA.R o) -> Network i hs o
+                            --trainEach :: (KnownNat i, KnownNat o) => Network i hs o -> (SA.R i, SA.R o) -> Network i hs o
                             trainEach nt (i2, o2) = train learningrate i2 o2 nt
 
                             zippedSamples = zip i o
@@ -415,6 +578,8 @@ checkAccuracy xs = 100 * Prelude.foldr checkAc 0 xs / fromIntegral(length xs)
 
 
 
+
+
 -- Auxiliar function to read samples from a String
 stringToSamples :: String -> [[Double]]
 stringToSamples x = Prelude.map (Prelude.map readSamples . words) (lines x)
@@ -432,7 +597,7 @@ main = do
     args <- getArgs
     let n    :: Maybe Int    = readMaybe =<< (args !!? 0)
         rate :: Maybe Double = readMaybe =<< (args !!? 1)
-    samplesFile <- readFile "/home/kali/Downloads/UFABC/PGC/Github/TypeSafeNeuralNetwork/inputs/inputs30K.txt"
+    samplesFile <- readFile "/home/kali/Downloads/PGC/TypeSafeNeuralNetwork/inputs/inputs30K.txt"
 
     -- Read input file to get all samples to train the neural network!
     let samples = stringToSamples samplesFile
@@ -444,51 +609,52 @@ main = do
 
     print (n, rate, inputD, outputD, dimensions)
 
+    putStrLn "Teste do readLn hs, digite:"
 
-    initialNet  :: Network 2 '[5] 1    <- randomNet [Logistic, Linear]
-
-    initialNet2 :: Network 2 '[5] 1    <- randomNet [Logistic, Linear]
-
-    putStrLn $ "initialNet e initialNet2 Eq check? R: " ++ show ( initialNet == initialNet2)
-    putStrLn $ "initialNet e initialNet Eq check? R: "  ++ show ( initialNet == initialNet)
-
- 
-
-    putStrLn "Showing initial Network, before training:\n\n"
-    putStrLn "\n\ninitialNet:\n"
-    print initialNet
-
-    putStrLn "\n\nTraining network..."
-
-    (_, _, netTrained, outputS) <- netTrain initialNet
-                                  (fromMaybe 0.0025   rate)  
-                                  (fromMaybe 1000 n   )   
-                                  (take 100 samples)
-                                   dimensions
-
-    putStrLn $ "Are initialNet e netTrained equals? R: " ++ show ( initialNet == netTrained)
-
-    putStrLn "\n\nNetwork after training: \n\n"
-    print netTrained
-
-    putStrLn "\n\n\nShowing network prediction of:\n"
-    putStrLn $ "\n-------> Accuracy: " ++ show (checkAccuracy outputS) ++ " % <------"
-    putStrLn $ renderOutput outputS
-    putStrLn "\n\n\nShowing network filtered prediction, with BinaryOutput NetFilter applied:\n"
-    let filteredResults = runNetFiltered netTrained (take 200 samples) dimensions BinaryOutput
-    putStrLn $ "\n-------> Accuracy: " ++ show (checkAccuracy filteredResults) ++ " % <------"
-    putStrLn $ renderOutput filteredResults
+    hs  <- readLn
+    putStrLn "hs lido: "
+    print hs
 
 
+    xNet :: OpaqueNet 2 1 <- randomONet [Logistic,Linear] hs
+    xNet2 :: OpaqueNet 2 1 <- randomONet [Logistic,Logistic,Logistic,Linear] hs
 
-    putStrLn "\n\nWriting the trained Network in the file: trainedNet.tsnn ...."
-    BSL.writeFile "trainedNet.tsnn" $ encode netTrained
-    putStrLn "\nLoading the Network from file trainedNet.tsnn, printing it:"
-    byteStringNet <- BSL.readFile "trainedNet.tsnn"
-    let fileTrainedNet :: Network 2 '[5] 1 = deserializeNetwork byteStringNet
-    print fileTrainedNet
-    putStrLn $ "Are netTrained and fileTrainedNet equals? R: " ++ show ( netTrained == fileTrainedNet)
-    putStrLn "\nNetwork succesfuly saved, shuting down the execution!"
+    putStrLn $ "xNet == xNet2 : " ++ show (xNet == xNet2)
+
+    putStrLn "Imprimindo OpaqueNet Random:"
+    print xNet
+
+    putStrLn "Escrevendo OpaqueNet...."
+    BSL.writeFile "testONet.tsnn" $ encode xNet
+
+    putStrLn "Lendo OpaqueNet...."
+    byteStringONet <- BSL.readFile "testONet.tsnn"
+    let fileONet :: OpaqueNet 2 1 = deserializeOpaqueNet byteStringONet
+    putStrLn "Imprimindo OpaqueNet Random carregada do arquivo:"
+    print fileONet
+
+    putStrLn $ "xNet == fileONet : " ++ show (xNet == fileONet)
+
+    if xNet == fileONet then 
+      putStrLn "Verificacao concluida, a rede neural gravada eh igua a original." 
+      else putStrLn "Erro, serializacao com problemas, a rede gravada nao eh igual a rede original!!"
+
+    case xNet of
+      ONet (net' :: Network 2 hs 1 ) -> do
+                    (_, _, outONet, outputS) <- netTrain net' (fromMaybe 0.0025   rate) (fromMaybe 10000 n) (take 100 samples) dimensions
+                    putStrLn $ renderOutput outputS
+                    putStrLn "Modelo Final:"
+                    print outONet
+                    putStrLn "Medindo acuracia do modelo treinado:"
+                    let filteredResults = runNetFiltered outONet (take 200 samples) dimensions BinaryOutput
+                    putStrLn $ "\n-------> Accuracy: " ++ show (checkAccuracy filteredResults) ++ " % <------"
+                    putStrLn $ renderOutput filteredResults
+                    putStrLn "\n\nSalvando o modelo treinado..."
+                    BSL.writeFile "ONetTrained.tsnn" $ encode xNet
+                    putStrLn "Modelo salvo com sucesso! Arquivo gerado: ONetTrained.tsnn"
+
+
+    
 
 (!!?) :: [a] -> Int -> Maybe a
 xs !!? i = listToMaybe (drop i xs)
